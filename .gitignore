@@ -20,3 +20,4 @@ data/*.task
 
 # Éditeur / OS
 .DS_Store
+.ruff_cache/
