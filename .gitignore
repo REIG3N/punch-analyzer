@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 data/raw/*
 .zed/
+.md
 
 # Python
 __pycache__/
