@@ -1,4 +1,5 @@
 import csv
+import math
 from pathlib import Path
 
 import cv2
@@ -97,7 +98,6 @@ def process_video(landmarker: vision.PoseLandmarker, video_path: Path) -> None:
     csv_rows = []
 
     CSV_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-
     while video.isOpened():
         ret, frame = video.read()
         if not ret:
@@ -108,23 +108,8 @@ def process_video(landmarker: vision.PoseLandmarker, video_path: Path) -> None:
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
         timestamp_ms = int(frame_idx * 1000 / fps)
 
-        result = landmarker.detect_for_video(mp_image, timestamp_ms)
-
-        if result.pose_landmarks:
-            landmarks = result.pose_landmarks[0]
-            for idx in TRACKED_INDICES:
-                lm = landmarks[idx]
-                csv_rows.append(
-                    {
-                        "frame_idx": frame_idx,
-                        "timestamp_ms": timestamp_ms,
-                        "landmark_id": idx,
-                        "x": lm.x,
-                        "y": lm.y,
-                        "z": lm.z,
-                        "visibility": lm.visibility,
-                    }
-                )
+        detection_result = landmarker.detect_for_video(mp_image, timestamp_ms)
+        csv_rows.extend(build_csv_rows(detection_result, frame_idx, timestamp_ms))
 
         frame_idx += 1
 
@@ -149,10 +134,42 @@ def process_video(landmarker: vision.PoseLandmarker, video_path: Path) -> None:
         print("No landmarks detected, CSV not written")
 
 
+
+def build_csv_rows(detection_result,frame_idx,timestamp_ms):
+    csv_rows = []
+    if not detection_result.pose_landmarks:
+        for idx in TRACKED_INDICES:
+            csv_rows.append(
+                {
+                    "frame_idx": frame_idx,
+                    "timestamp_ms": timestamp_ms,
+                    "landmark_id": idx,
+                    "x": math.nan,
+                    "y": math.nan,
+                    "z": math.nan,
+                    "visibility": math.nan,
+                }
+            )
+    else:
+        landmarks = detection_result.pose_landmarks[0]
+        for idx in TRACKED_INDICES:
+            lm = landmarks[idx]
+            csv_rows.append(
+                {
+                    "frame_idx": frame_idx,
+                    "timestamp_ms": timestamp_ms,
+                    "landmark_id": idx,
+                    "x": lm.x,
+                    "y": lm.y,
+                    "z": lm.z,
+                    "visibility": lm.visibility,
+                }
+            )
+    return csv_rows
+
 def main() -> None:
     with load_landmarker() as landmarker:
         process_video(landmarker, VIDEO_PATH)
-
 
 if __name__ == "__main__":
     main()
