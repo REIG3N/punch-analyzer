@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+data/raw/*
+.zed/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Assets binaires / non versionnés
+video/
+data/csv/
+data/*.task
+
+# Fichiers de travail parasites
+*copy.py
+
+# Éditeur / OS
+.DS_Store
