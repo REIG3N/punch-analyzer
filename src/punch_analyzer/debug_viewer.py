@@ -21,6 +21,10 @@ STRIKE_FLASH_WINDOW_FRAMES = 3
 PLAYBACK_SPEEDS = [0.25, 0.5, 1.0, 1.5, 2.0]
 DEFAULT_SPEED_INDEX = PLAYBACK_SPEEDS.index(1.0)
 
+LEFT_STRIKE_COLOR = (0, 0, 255)  # rouge (BGR)
+RIGHT_STRIKE_COLOR = (255, 0, 0)  # bleu (BGR)
+STRIKE_BORDER_THICKNESS = 10
+
 CONTROLS_HELP = (
     "Contrôles: [espace] pause/lecture | a/d frame précédente/suivante "
     "(en pause) | [ ] vitesse de lecture -/+ | trackbar = position | "
@@ -61,42 +65,72 @@ def format_overlay_lines(
     right_speed: float | None,
     active_hands: list[str],
 ) -> list[str]:
+    """4 lignes fixes : le marqueur de coup s'ajoute à la ligne de la main
+    concernée plutôt que d'apparaître/disparaître comme ligne séparée, pour
+    que rien ne se décale à l'écran quand un coup est détecté."""
+
     def fmt_speed(value: float | None) -> str:
         return f"{value:.3f}" if value is not None else "N/A"
 
-    lines = [
+    def marker(hand: str) -> str:
+        return " -- COUP" if hand in active_hands else ""
+
+    return [
         f"frame {frame_idx}",
-        f"vitesse poignet gauche: {fmt_speed(left_speed)}",
-        f"vitesse poignet droit: {fmt_speed(right_speed)}",
+        f"gauche: {fmt_speed(left_speed)}{marker('left')}",
+        f"droit: {fmt_speed(right_speed)}{marker('right')}",
         "type de coup: N/A (Ticket 3)",
     ]
-    if active_hands:
-        lines.append(f"COUP DETECTE: {', '.join(active_hands)}")
-    return lines
 
 
 def draw_overlay(frame, lines: list[str]) -> None:
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.5
+    thickness = 1
+    line_height = 20
+    padding = 8
+    # Marge à gauche pour ne pas passer sous la bordure de coup détecté
+    # (draw_strike_borders), dessinée après l'overlay pour rester saturée.
+    text_left = STRIKE_BORDER_THICKNESS + padding
+
+    text_width = max(
+        cv2.getTextSize(line, font, font_scale, thickness)[0][0] for line in lines
+    )
+    box_width = text_left + text_width + padding
+    box_height = line_height * len(lines) + padding
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (box_width, box_height), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+
     for i, line in enumerate(lines):
-        y = 22 + i * 26
+        y = padding + line_height * (i + 1) - 6
         cv2.putText(
             frame,
             line,
-            (10, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (0, 0, 0),
-            2,
+            (text_left, y),
+            font,
+            font_scale,
+            (255, 255, 255),
+            thickness,
             cv2.LINE_AA,
         )
-        cv2.putText(
+
+
+def draw_strike_borders(
+    frame, active_hands: list[str], width: int, height: int
+) -> None:
+    if "left" in active_hands:
+        cv2.rectangle(
+            frame, (0, 0), (STRIKE_BORDER_THICKNESS, height - 1), LEFT_STRIKE_COLOR, -1
+        )
+    if "right" in active_hands:
+        cv2.rectangle(
             frame,
-            line,
-            (10, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            1,
-            cv2.LINE_AA,
+            (width - 1 - STRIKE_BORDER_THICKNESS, 0),
+            (width - 1, height - 1),
+            RIGHT_STRIKE_COLOR,
+            -1,
         )
 
 
@@ -167,8 +201,7 @@ def run_debug_viewer(video_path: Path, output_dir: Path = CSV_OUTPUT_DIR) -> Non
             active_hands,
         )
         draw_overlay(frame, lines)
-        if active_hands:
-            cv2.rectangle(frame, (0, 0), (width - 1, height - 1), (0, 0, 255), 8)
+        draw_strike_borders(frame, active_hands, width, height)
 
         cv2.imshow(WINDOW_NAME, frame)
 

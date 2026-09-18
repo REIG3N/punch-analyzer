@@ -52,16 +52,22 @@ def test_nearby_strike_hands_within_window():
     assert nearby_strike_hands(10, strikes, window_frames=0) == ["left"]
 
 
-def test_format_overlay_lines_includes_strike_when_active():
+def test_format_overlay_lines_has_fixed_line_count_regardless_of_strikes():
+    inactive = format_overlay_lines(0, None, None, [])
+    active = format_overlay_lines(0, 0.5, 0.3, ["left", "right"])
+
+    assert len(inactive) == len(active) == 4
+
+
+def test_format_overlay_lines_marks_only_the_striking_hand():
     lines = format_overlay_lines(42, 0.5, None, ["left"])
 
     assert "frame 42" in lines[0]
-    assert any("gauche" in line and "0.500" in line for line in lines)
-    assert any("droit" in line and "N/A" in line for line in lines)
-    assert any("COUP DETECTE" in line and "left" in line for line in lines)
+    assert "gauche" in lines[1] and "0.500" in lines[1] and "COUP" in lines[1]
+    assert "droit" in lines[2] and "N/A" in lines[2] and "COUP" not in lines[2]
 
 
-def test_format_overlay_lines_no_strike_line_when_inactive():
+def test_format_overlay_lines_no_marker_when_inactive():
     lines = format_overlay_lines(0, None, None, [])
 
-    assert not any("COUP DETECTE" in line for line in lines)
+    assert not any("COUP" in line for line in lines)

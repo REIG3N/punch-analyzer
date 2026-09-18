@@ -121,7 +121,12 @@ def main() -> None:
         return
 
     strikes = detect_strikes_from_csv(csv_path)
-    print(f"{len(strikes)} coups détectés dans {csv_path.name}")
+    left_count = sum(1 for s in strikes if s.hand == "left")
+    right_count = sum(1 for s in strikes if s.hand == "right")
+    print(
+        f"{len(strikes)} coups détectés dans {csv_path.name} "
+        f"({left_count} gauche, {right_count} droite)"
+    )
     for strike in strikes:
         print(
             f"  [{strike.hand}] frame {strike.frame_idx} "
