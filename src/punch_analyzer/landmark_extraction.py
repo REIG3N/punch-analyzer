@@ -7,10 +7,12 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MODEL_ASSET_PATH = PROJECT_ROOT / "data" / "pose_landmarker_full.task"
-VIDEO_PATH = PROJECT_ROOT / "video" / "videoplayback.mp4"
-CSV_OUTPUT_DIR = PROJECT_ROOT / "data" / "csv"
+from punch_analyzer.paths import (
+    CSV_OUTPUT_DIR,
+    MODEL_ASSET_PATH,
+    VIDEO_PATH,
+    csv_path_for_video,
+)
 
 START_TIME_MS = (
     120000  # commence à 120 s (ajustez selon votre timing d'intro + corde à sauter)
@@ -103,7 +105,7 @@ def process_video(
     csv_rows = []
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{video_path.stem}.csv"
+    output_path = csv_path_for_video(video_path, output_dir)
 
     while video.isOpened():
         ret, frame = video.read()
