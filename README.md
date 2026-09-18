@@ -19,7 +19,10 @@ Extraction des landmarks de pose depuis une vidéo (export CSV) et détection de
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e .
 ```
+
+`pip install -e .` installe le paquet `punch_analyzer` (layout `src/`) en mode éditable, pour que `python -m punch_analyzer.<module>` fonctionne depuis n'importe quel répertoire sans manipuler `PYTHONPATH`.
 
 Le modèle MediaPipe (`pose_landmarker_full.task`) n'est pas versionné dans ce repo — à télécharger depuis [la documentation officielle MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker/python) et placer dans `data/`.
 
@@ -27,7 +30,7 @@ Le modèle MediaPipe (`pose_landmarker_full.task`) n'est pas versionné dans ce 
 
 ```bash
 # Extraction des landmarks vers CSV
-python src/punch_analyzer/main.py
+python -m punch_analyzer.landmark_extraction
 
 # Détection des coups (pics de vitesse du poignet) à partir du CSV
 python -m punch_analyzer.strike_detection
