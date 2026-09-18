@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import pandas as pd
 
-from punch_analyzer.landmark_extraction import draw_skeleton
+from punch_analyzer.landmark_extraction import START_TIME_MS, draw_skeleton
 from punch_analyzer.paths import CSV_OUTPUT_DIR, VIDEO_PATH, csv_path_for_video
 from punch_analyzer.strike_detection import (
     LEFT_WRIST_ID,
@@ -16,9 +16,6 @@ from punch_analyzer.strike_detection import (
 
 WINDOW_NAME = "Punch Analyzer - Debug"
 
-# Fenêtre (en frames) autour d'un pic détecté pendant laquelle l'overlay reste
-# affiché, pour que le coup reste visible même en lecture continue et pas
-# seulement si l'utilisateur met pause exactement sur la frame du pic.
 STRIKE_FLASH_WINDOW_FRAMES = 3
 
 PLAYBACK_SPEEDS = [0.25, 0.5, 1.0, 1.5, 2.0]
@@ -34,11 +31,7 @@ CONTROLS_HELP = (
 def build_frame_landmarks(
     df: pd.DataFrame,
 ) -> dict[int, dict[int, tuple[float, float]]]:
-    """Reconstruit {frame_idx: {landmark_id: (x, y)}} à partir du CSV long.
-
-    `draw_skeleton` attend ce format, pas les objets de résultat MediaPipe
-    bruts. Les landmarks non détectés (NaN) sont exclus de la frame.
-    """
+    """Reconstruit {frame_idx: {landmark_id: (x, y)}} à partir du CSV long, format attendu par draw_skeleton."""
     frames: dict[int, dict[int, tuple[float, float]]] = {}
     valid = df.dropna(subset=["x", "y"])
     for frame_idx, group in valid.groupby("frame_idx"):
@@ -84,15 +77,15 @@ def format_overlay_lines(
 
 def draw_overlay(frame, lines: list[str]) -> None:
     for i, line in enumerate(lines):
-        y = 25 + i * 22
+        y = 22 + i * 26
         cv2.putText(
             frame,
             line,
             (10, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
+            0.55,
             (0, 0, 0),
-            3,
+            2,
             cv2.LINE_AA,
         )
         cv2.putText(
@@ -100,7 +93,7 @@ def draw_overlay(frame, lines: list[str]) -> None:
             line,
             (10, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
+            0.55,
             (255, 255, 255),
             1,
             cv2.LINE_AA,
@@ -131,10 +124,20 @@ def run_debug_viewer(video_path: Path, output_dir: Path = CSV_OUTPUT_DIR) -> Non
         print(f"Erreur: vidéo non trouvée ou illisible ({video_path})")
         return
 
-    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = video.get(cv2.CAP_PROP_FPS) or 30.0
+    video_total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # frame_idx du CSV est relatif au début de l'extraction (START_TIME_MS
+    # dans la vidéo), pas à la frame 0 absolue de la vidéo : on reproduit le
+    # même seek que landmark_extraction.process_video() pour retrouver
+    # l'offset réel, plutôt que de le recalculer via fps (arrondi imprécis).
+    video.set(cv2.CAP_PROP_POS_MSEC, START_TIME_MS)
+    frame_offset = int(video.get(cv2.CAP_PROP_POS_FRAMES))
+
+    csv_frame_count = int(df["frame_idx"].max()) + 1 if not df.empty else 0
+    total_frames = max(0, min(csv_frame_count, video_total_frames - frame_offset))
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, width, height)
@@ -147,7 +150,7 @@ def run_debug_viewer(video_path: Path, output_dir: Path = CSV_OUTPUT_DIR) -> Non
     while True:
         current_frame = cv2.getTrackbarPos("Frame", WINDOW_NAME)
 
-        video.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+        video.set(cv2.CAP_PROP_POS_FRAMES, frame_offset + current_frame)
         ret, frame = video.read()
         if not ret:
             break

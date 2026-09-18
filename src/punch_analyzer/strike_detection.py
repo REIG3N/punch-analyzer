@@ -11,22 +11,8 @@ LEFT_WRIST_ID = 15
 RIGHT_WRIST_ID = 16
 WRIST_LANDMARKS = {"left": LEFT_WRIST_ID, "right": RIGHT_WRIST_ID}
 
-# Gaps de tracking (perte MediaPipe) de cette longueur ou moins sont interpolés
-# linéairement ("cohérents avec la trajectoire globale"). Au-delà, on considère
-# la coupure trop longue pour être fiable et on n'essaie pas de la combler :
-# la vitesse reste NaN sur ce segment plutôt que de créer un pic artificiel en
-# reliant deux points trop éloignés dans le temps.
 DEFAULT_MAX_GAP_FRAMES = 5
-
-# Distance minimale entre deux coups, en millisecondes, pour ne pas compter un
-# même coup deux fois (un aller-retour de poignet ne doit pas produire deux
-# pics). Convertie en nombre d'échantillons via le pas de temps médian du CSV,
-# donc indépendante du frame rate de la vidéo source.
 DEFAULT_MIN_STRIKE_INTERVAL_MS = 250.0
-
-# Proéminence minimale du pic de vitesse (unités normalisées/s) pour filtrer
-# le bruit de tracking résiduel. Valeur de départ à affiner par Ryan sur la
-# vidéo de test réelle.
 DEFAULT_MIN_PROMINENCE = 1.5
 
 
@@ -52,14 +38,7 @@ def compute_wrist_speed(
     landmark_id: int,
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
 ) -> pd.DataFrame:
-    """Vitesse (unités normalisées/s) d'un landmark poignet, frame par frame.
-
-    Dérivée par rapport à `timestamp_ms` (pas au numéro de frame), donc valide
-    quel que soit le frame rate de la vidéo source. Les trous de tracking
-    courts sont interpolés avant dérivation pour éviter une explosion de
-    vitesse sur la transition NaN -> valeur ; les trous plus longs restent
-    NaN et ne sont pas comblés.
-    """
+    """Vitesse (unités normalisées/s) d'un landmark poignet, dérivée de timestamp_ms."""
     wrist = (
         df[df["landmark_id"] == landmark_id]
         .sort_values("frame_idx")
