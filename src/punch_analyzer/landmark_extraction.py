@@ -94,6 +94,7 @@ def process_video(
     landmarker: vision.PoseLandmarker,
     video_path: Path,
     output_dir: Path = CSV_OUTPUT_DIR,
+    start_ms: int = START_TIME_MS,
 ) -> None:
     video = cv2.VideoCapture(str(video_path))
     if not video.isOpened():
@@ -101,7 +102,7 @@ def process_video(
         return
 
     fps = video.get(cv2.CAP_PROP_FPS)
-    video.set(cv2.CAP_PROP_POS_MSEC, START_TIME_MS)
+    video.set(cv2.CAP_PROP_POS_MSEC, start_ms)
     frame_idx = 0
     csv_rows = []
 
@@ -150,10 +151,11 @@ def main() -> None:
     )
     parser.add_argument("--video", type=Path, default=VIDEO_PATH)
     parser.add_argument("--output-dir", type=Path, default=CSV_OUTPUT_DIR)
+    parser.add_argument("--start-ms", type=int, default=START_TIME_MS)
     args = parser.parse_args()
 
     with load_landmarker() as landmarker:
-        process_video(landmarker, args.video, args.output_dir)
+        process_video(landmarker, args.video, args.output_dir, args.start_ms)
 
 
 if __name__ == "__main__":

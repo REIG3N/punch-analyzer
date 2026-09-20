@@ -138,7 +138,11 @@ def _no_op(_value: int) -> None:
     pass
 
 
-def run_debug_viewer(video_path: Path, output_dir: Path = CSV_OUTPUT_DIR) -> None:
+def run_debug_viewer(
+    video_path: Path,
+    output_dir: Path = CSV_OUTPUT_DIR,
+    start_ms: int = START_TIME_MS,
+) -> None:
     csv_path = csv_path_for_video(video_path, output_dir)
     if not csv_path.exists():
         print(f"CSV introuvable: {csv_path} (lancer landmark_extraction d'abord)")
@@ -163,11 +167,11 @@ def run_debug_viewer(video_path: Path, output_dir: Path = CSV_OUTPUT_DIR) -> Non
     fps = video.get(cv2.CAP_PROP_FPS) or 30.0
     video_total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # frame_idx du CSV est relatif au début de l'extraction (START_TIME_MS
-    # dans la vidéo), pas à la frame 0 absolue de la vidéo : on reproduit le
+    # frame_idx du CSV est relatif au début de l'extraction (start_ms dans
+    # la vidéo), pas à la frame 0 absolue de la vidéo : on reproduit le
     # même seek que landmark_extraction.process_video() pour retrouver
     # l'offset réel, plutôt que de le recalculer via fps (arrondi imprécis).
-    video.set(cv2.CAP_PROP_POS_MSEC, START_TIME_MS)
+    video.set(cv2.CAP_PROP_POS_MSEC, start_ms)
     frame_offset = int(video.get(cv2.CAP_PROP_POS_FRAMES))
 
     csv_frame_count = int(df["frame_idx"].max()) + 1 if not df.empty else 0
@@ -242,8 +246,9 @@ def main() -> None:
     )
     parser.add_argument("--video", type=Path, default=VIDEO_PATH)
     parser.add_argument("--csv-dir", type=Path, default=CSV_OUTPUT_DIR)
+    parser.add_argument("--start-ms", type=int, default=START_TIME_MS)
     args = parser.parse_args()
-    run_debug_viewer(args.video, args.csv_dir)
+    run_debug_viewer(args.video, args.csv_dir, args.start_ms)
 
 
 if __name__ == "__main__":
