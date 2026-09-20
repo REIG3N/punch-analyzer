@@ -1,3 +1,4 @@
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -115,7 +116,14 @@ def detect_strikes_from_csv(csv_path: Path, **kwargs) -> list[Strike]:
 
 
 def main() -> None:
-    csv_path = csv_path_for_video(VIDEO_PATH, CSV_OUTPUT_DIR)
+    parser = argparse.ArgumentParser(
+        description="Détecte les coups (pics de vitesse du poignet) à partir du CSV d'une vidéo."
+    )
+    parser.add_argument("--video", type=Path, default=VIDEO_PATH)
+    parser.add_argument("--csv-dir", type=Path, default=CSV_OUTPUT_DIR)
+    args = parser.parse_args()
+
+    csv_path = csv_path_for_video(args.video, args.csv_dir)
     if not csv_path.exists():
         print(f"CSV introuvable: {csv_path} (lancer landmark_extraction d'abord)")
         return

@@ -1,3 +1,4 @@
+import argparse
 import csv
 import math
 from pathlib import Path
@@ -144,8 +145,15 @@ def process_video(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Extraction des landmarks de pose depuis une vidéo vers CSV."
+    )
+    parser.add_argument("--video", type=Path, default=VIDEO_PATH)
+    parser.add_argument("--output-dir", type=Path, default=CSV_OUTPUT_DIR)
+    args = parser.parse_args()
+
     with load_landmarker() as landmarker:
-        process_video(landmarker, VIDEO_PATH)
+        process_video(landmarker, args.video, args.output_dir)
 
 
 if __name__ == "__main__":
