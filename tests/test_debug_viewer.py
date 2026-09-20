@@ -3,10 +3,11 @@ import math
 import pandas as pd
 
 from punch_analyzer.debug_viewer import (
+    build_extension_lookup,
     build_frame_landmarks,
     build_speed_lookup,
     format_overlay_lines,
-    nearby_strike_hands,
+    nearby_strikes,
 )
 from punch_analyzer.strike_detection import Strike
 
@@ -41,33 +42,62 @@ def test_build_speed_lookup_skips_nan_rows():
     assert lookup == {1: 1.23}
 
 
-def test_nearby_strike_hands_within_window():
+def test_build_extension_lookup_skips_nan_rows():
+    df = pd.DataFrame(
+        [
+            {"frame_idx": 0, "extension_ratio": math.nan},
+            {"frame_idx": 1, "extension_ratio": 0.91},
+        ]
+    )
+
+    lookup = build_extension_lookup(df)
+
+    assert lookup == {1: 0.91}
+
+
+def test_nearby_strikes_within_window():
     strikes = [
-        Strike(hand="left", frame_idx=10, timestamp_ms=100.0, speed=5.0),
-        Strike(hand="right", frame_idx=50, timestamp_ms=500.0, speed=5.0),
+        Strike(hand="left", frame_idx=10, timestamp_ms=100.0, speed=5.0, geometric_pass=True),
+        Strike(hand="right", frame_idx=50, timestamp_ms=500.0, speed=5.0, geometric_pass=False),
     ]
 
-    assert nearby_strike_hands(11, strikes, window_frames=3) == ["left"]
-    assert nearby_strike_hands(30, strikes, window_frames=3) == []
-    assert nearby_strike_hands(10, strikes, window_frames=0) == ["left"]
+    assert [s.hand for s in nearby_strikes(11, strikes, window_frames=3)] == ["left"]
+    assert nearby_strikes(30, strikes, window_frames=3) == []
+    assert [s.hand for s in nearby_strikes(10, strikes, window_frames=0)] == ["left"]
 
 
 def test_format_overlay_lines_has_fixed_line_count_regardless_of_strikes():
-    inactive = format_overlay_lines(0, None, None, [])
-    active = format_overlay_lines(0, 0.5, 0.3, ["left", "right"])
+    inactive = format_overlay_lines(0, None, None, None, None, [])
+    active = format_overlay_lines(
+        0, 0.5, 0.3, 0.9, 0.6,
+        [Strike(hand="left", frame_idx=0, timestamp_ms=0.0, speed=5.0, geometric_pass=True)],
+    )
 
     assert len(inactive) == len(active) == 4
 
 
-def test_format_overlay_lines_marks_only_the_striking_hand():
-    lines = format_overlay_lines(42, 0.5, None, ["left"])
+def test_format_overlay_lines_marks_confirmed_strike():
+    strikes = [
+        Strike(hand="left", frame_idx=42, timestamp_ms=0.0, speed=5.0, geometric_pass=True)
+    ]
+    lines = format_overlay_lines(42, 0.5, None, 0.95, None, strikes)
 
     assert "frame 42" in lines[0]
     assert "gauche" in lines[1] and "0.500" in lines[1] and "COUP" in lines[1]
     assert "droit" in lines[2] and "N/A" in lines[2] and "COUP" not in lines[2]
 
 
-def test_format_overlay_lines_no_marker_when_inactive():
-    lines = format_overlay_lines(0, None, None, [])
+def test_format_overlay_lines_marks_unconfirmed_strike_differently():
+    strikes = [
+        Strike(hand="left", frame_idx=42, timestamp_ms=0.0, speed=5.0, geometric_pass=False)
+    ]
+    lines = format_overlay_lines(42, 0.5, None, 0.6, None, strikes)
 
-    assert not any("COUP" in line for line in lines)
+    assert "coup?" in lines[1]
+    assert "-- COUP" not in lines[1]
+
+
+def test_format_overlay_lines_no_marker_when_inactive():
+    lines = format_overlay_lines(0, None, None, None, None, [])
+
+    assert not any("COUP" in line or "coup?" in line for line in lines)

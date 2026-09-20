@@ -1,7 +1,8 @@
 import math
 from types import SimpleNamespace
-import pytest
+
 from punch_analyzer.landmark_extraction import TRACKED_INDICES, build_csv_rows
+
 
 def make_landmark(x, y, z, visibility):
     return SimpleNamespace(x=x, y=y, z=z, visibility=visibility)
