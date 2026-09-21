@@ -3,6 +3,7 @@ from pathlib import Path
 
 from punch_analyzer.combo_comparator import (
     ComboExpectation,
+    format_window_report,
     load_combo_list,
     score_combos,
     strikes_in_window,
@@ -95,3 +96,18 @@ def test_score_combos_zips_only_common_length():
     scores = score_combos(windows, [], combos)
 
     assert len(scores) == 1
+
+
+def test_format_window_report_shows_duration_and_gap_since_previous():
+    windows = [
+        ActivityWindow(start_frame=0, end_frame=10, start_ms=1000.0, end_ms=1500.0),
+        ActivityWindow(start_frame=50, end_frame=60, start_ms=4000.0, end_ms=4300.0),
+    ]
+
+    lines = format_window_report(windows)
+
+    assert len(lines) == 2
+    assert "1.00s" in lines[0] and "1.50s" in lines[0] and "0.50s" in lines[0]
+    assert "N/A" in lines[0]  # pas de fenêtre précédente
+    assert "4.00s" in lines[1] and "4.30s" in lines[1]
+    assert "2.50s" in lines[1]  # silence = 4.00s - 1.50s
