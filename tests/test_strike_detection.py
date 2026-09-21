@@ -219,10 +219,10 @@ def test_compute_wrist_speed_subtracts_torso_velocity():
             )
     df = pd.DataFrame(rows)
     wide = pivot_landmarks(df)
-    torso_velocity = compute_torso_center_velocity(wide, mincutoff=1000.0, beta=0.0)
+    torso_velocity = compute_torso_center_velocity(wide, savgol_window=3, savgol_polyorder=1)
 
     speed = compute_wrist_speed(
-        df, LEFT_WRIST_ID, torso_velocity, mincutoff=1000.0, beta=0.0
+        df, LEFT_WRIST_ID, torso_velocity, savgol_window=3, savgol_polyorder=1
     )
 
     # Le poignet bouge uniquement parce que le tronc bouge : vitesse relative ~0.
@@ -416,7 +416,7 @@ def test_segment_activity_windows_splits_on_long_silence():
     x_values = _moving(15) + _still(90, 0.28) + _moving(15, start=0.28)
     df = _speed_df(x_values)
 
-    windows = segment_activity_windows(df, mincutoff=1000.0, beta=0.0)
+    windows = segment_activity_windows(df, savgol_window=3, savgol_polyorder=1)
 
     assert len(windows) == 2
 
@@ -425,7 +425,7 @@ def test_segment_activity_windows_bridges_brief_lull_inside_combo():
     x_values = _moving(10) + _still(5, 0.2) + _moving(15, start=0.2)
     df = _speed_df(x_values)
 
-    windows = segment_activity_windows(df, mincutoff=1000.0, beta=0.0)
+    windows = segment_activity_windows(df, savgol_window=3, savgol_polyorder=1)
 
     assert len(windows) == 1
 
@@ -434,6 +434,6 @@ def test_segment_activity_windows_drops_short_blip():
     x_values = _still(40, 0.0) + _moving(3) + _still(40, 0.06)
     df = _speed_df(x_values)
 
-    windows = segment_activity_windows(df, mincutoff=1000.0, beta=0.0)
+    windows = segment_activity_windows(df, savgol_window=3, savgol_polyorder=1)
 
     assert windows == []
