@@ -11,6 +11,8 @@ from punch_analyzer.strike_detection import (
     RIGHT_HIP_ID,
     RIGHT_SHOULDER_ID,
     RIGHT_WRIST_ID,
+    Strike,
+    _arbitrate_cross_hand,
     _fill_short_gaps,
     compute_arm_geometry,
     compute_torso_center_velocity,
@@ -18,6 +20,7 @@ from punch_analyzer.strike_detection import (
     detect_strikes,
     detect_strikes_for_hand,
     pivot_landmarks,
+    segment_activity_windows,
 )
 
 FPS = 30.0
@@ -344,3 +347,93 @@ def test_detect_strikes_runs_without_crash_on_noisy_csv():
     df = _jab_cycle_df()
     strikes = detect_strikes(df)
     assert isinstance(strikes, list)
+
+
+def test_arbitrate_cross_hand_keeps_only_higher_extension_when_simultaneous():
+    strikes = [
+        Strike(hand="left", frame_idx=100, timestamp_ms=3333.0, speed=2.0, geometric_pass=True, extension_ratio=0.90),
+        Strike(hand="right", frame_idx=102, timestamp_ms=3400.0, speed=2.0, geometric_pass=True, extension_ratio=0.97),
+    ]
+
+    _arbitrate_cross_hand(strikes, window_frames=5)
+
+    assert strikes[0].geometric_pass is False
+    assert strikes[1].geometric_pass is True
+
+
+def test_arbitrate_cross_hand_leaves_distant_strikes_untouched():
+    strikes = [
+        Strike(hand="left", frame_idx=10, timestamp_ms=333.0, speed=2.0, geometric_pass=True, extension_ratio=0.90),
+        Strike(hand="right", frame_idx=200, timestamp_ms=6666.0, speed=2.0, geometric_pass=True, extension_ratio=0.97),
+    ]
+
+    _arbitrate_cross_hand(strikes, window_frames=5)
+
+    assert strikes[0].geometric_pass is True
+    assert strikes[1].geometric_pass is True
+
+
+def test_arbitrate_cross_hand_ignores_unconfirmed_candidates():
+    strikes = [
+        Strike(hand="left", frame_idx=100, timestamp_ms=3333.0, speed=2.0, geometric_pass=True, extension_ratio=0.90),
+        Strike(hand="right", frame_idx=102, timestamp_ms=3400.0, speed=0.1, geometric_pass=False, extension_ratio=0.97),
+    ]
+
+    _arbitrate_cross_hand(strikes, window_frames=5)
+
+    assert strikes[0].geometric_pass is True
+    assert strikes[1].geometric_pass is False
+
+
+def _speed_df(x_values: list[float], landmark_id: int = LEFT_WRIST_ID) -> pd.DataFrame:
+    rows = []
+    for frame_idx, x in enumerate(x_values):
+        t_ms = frame_idx * FRAME_MS
+        for lid, lx in ((landmark_id, x), (LEFT_SHOULDER_ID, 0.0), (RIGHT_SHOULDER_ID, 0.3)):
+            rows.append(
+                {
+                    "frame_idx": frame_idx,
+                    "timestamp_ms": t_ms,
+                    "landmark_id": lid,
+                    "x": lx,
+                    "y": 0.5,
+                    "z": 0.0,
+                    "visibility": 0.9,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _moving(n: int, step: float = 0.02, start: float = 0.0) -> list[float]:
+    return [start + step * i for i in range(n)]
+
+
+def _still(n: int, value: float = 0.0) -> list[float]:
+    return [value] * n
+
+
+def test_segment_activity_windows_splits_on_long_silence():
+    x_values = _moving(15) + _still(90, 0.28) + _moving(15, start=0.28)
+    df = _speed_df(x_values)
+
+    windows = segment_activity_windows(df, mincutoff=1000.0, beta=0.0)
+
+    assert len(windows) == 2
+
+
+def test_segment_activity_windows_bridges_brief_lull_inside_combo():
+    x_values = _moving(10) + _still(5, 0.2) + _moving(15, start=0.2)
+    df = _speed_df(x_values)
+
+    windows = segment_activity_windows(df, mincutoff=1000.0, beta=0.0)
+
+    assert len(windows) == 1
+
+
+def test_segment_activity_windows_drops_short_blip():
+    x_values = _still(40, 0.0) + _moving(3) + _still(40, 0.06)
+    df = _speed_df(x_values)
+
+    windows = segment_activity_windows(df, mincutoff=1000.0, beta=0.0)
+
+    assert windows == []
