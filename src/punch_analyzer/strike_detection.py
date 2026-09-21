@@ -7,7 +7,7 @@ import pandas as pd
 from scipy.signal import find_peaks
 
 from punch_analyzer.paths import CSV_OUTPUT_DIR, VIDEO_PATH, csv_path_for_video
-from punch_analyzer.smoothing import smooth_series
+from punch_analyzer.smoothing import smooth_series as savgol_smooth_series
 
 LEFT_WRIST_ID = 15
 RIGHT_WRIST_ID = 16
@@ -28,9 +28,11 @@ DEFAULT_MAX_GAP_FRAMES = 5
 DEFAULT_MIN_STRIKE_INTERVAL_MS = 250.0
 
 DEFAULT_MIN_VISIBILITY = 0.5
-DEFAULT_ONE_EURO_MINCUTOFF = 1.0
-DEFAULT_ONE_EURO_BETA = 0.1
-DEFAULT_ONE_EURO_DCUTOFF = 1.0
+# Lissage Savitzky-Golay (non causal : la vidéo est déjà enregistrée en entier,
+# pas de contrainte de temps réel) appliqué aux positions x/y avant de calculer
+# vitesse et extension_ratio. window doit être impair.
+DEFAULT_SAVGOL_WINDOW = 9
+DEFAULT_SAVGOL_POLYORDER = 3
 
 DEFAULT_EXTENSION_RATIO_THRESHOLD = 0.85
 DEFAULT_EXTENSION_PEAK_PROMINENCE = 0.15
@@ -97,19 +99,29 @@ def _landmark_xy(
     return _mask_low_visibility(x, y, visibility, min_visibility)
 
 
+def _smoothed_xy(
+    x: pd.Series,
+    y: pd.Series,
+    max_gap_frames: int,
+    savgol_window: int,
+    savgol_polyorder: int,
+) -> tuple[pd.Series, pd.Series]:
+    x = _fill_short_gaps(x, max_gap_frames)
+    y = _fill_short_gaps(y, max_gap_frames)
+    x = savgol_smooth_series(x, savgol_window, savgol_polyorder)
+    y = savgol_smooth_series(y, savgol_window, savgol_polyorder)
+    return x, y
+
+
 def _velocity(
     x: pd.Series,
     y: pd.Series,
     timestamp_ms: pd.Series,
     max_gap_frames: int,
-    mincutoff: float,
-    beta: float,
-    dcutoff: float,
+    savgol_window: int,
+    savgol_polyorder: int,
 ) -> tuple[pd.Series, pd.Series]:
-    x = _fill_short_gaps(x, max_gap_frames)
-    y = _fill_short_gaps(y, max_gap_frames)
-    x = smooth_series(x, timestamp_ms, mincutoff, beta, dcutoff)
-    y = smooth_series(y, timestamp_ms, mincutoff, beta, dcutoff)
+    x, y = _smoothed_xy(x, y, max_gap_frames, savgol_window, savgol_polyorder)
 
     dt_seconds = timestamp_ms.diff() / 1000.0
     vx = x.diff() / dt_seconds
@@ -121,9 +133,8 @@ def compute_torso_center_velocity(
     wide: pd.DataFrame,
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
     min_visibility: float = DEFAULT_MIN_VISIBILITY,
-    mincutoff: float = DEFAULT_ONE_EURO_MINCUTOFF,
-    beta: float = DEFAULT_ONE_EURO_BETA,
-    dcutoff: float = DEFAULT_ONE_EURO_DCUTOFF,
+    savgol_window: int = DEFAULT_SAVGOL_WINDOW,
+    savgol_polyorder: int = DEFAULT_SAVGOL_POLYORDER,
 ) -> pd.DataFrame:
     left_x, left_y = _landmark_xy(wide, LEFT_SHOULDER_ID, min_visibility)
     right_x, right_y = _landmark_xy(wide, RIGHT_SHOULDER_ID, min_visibility)
@@ -131,7 +142,7 @@ def compute_torso_center_velocity(
     center_y = pd.concat([left_y, right_y], axis=1).mean(axis=1, skipna=True)
 
     vx, vy = _velocity(
-        center_x, center_y, wide["timestamp_ms"], max_gap_frames, mincutoff, beta, dcutoff
+        center_x, center_y, wide["timestamp_ms"], max_gap_frames, savgol_window, savgol_polyorder
     )
     return pd.DataFrame({"frame_idx": wide["frame_idx"], "vx": vx, "vy": vy})
 
@@ -142,9 +153,8 @@ def compute_wrist_speed(
     torso_velocity: pd.DataFrame | None = None,
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
     min_visibility: float = DEFAULT_MIN_VISIBILITY,
-    mincutoff: float = DEFAULT_ONE_EURO_MINCUTOFF,
-    beta: float = DEFAULT_ONE_EURO_BETA,
-    dcutoff: float = DEFAULT_ONE_EURO_DCUTOFF,
+    savgol_window: int = DEFAULT_SAVGOL_WINDOW,
+    savgol_polyorder: int = DEFAULT_SAVGOL_POLYORDER,
 ) -> pd.DataFrame:
     """Vitesse (unités normalisées/s) d'un poignet, relative au centre-épaules si torso_velocity est fourni."""
     wrist = (
@@ -157,7 +167,8 @@ def compute_wrist_speed(
         wrist["x"], wrist["y"], wrist["visibility"], min_visibility
     )
     vx, vy = _velocity(
-        wrist["x"], wrist["y"], wrist["timestamp_ms"], max_gap_frames, mincutoff, beta, dcutoff
+        wrist["x"], wrist["y"], wrist["timestamp_ms"], max_gap_frames,
+        savgol_window, savgol_polyorder,
     )
 
     if torso_velocity is not None:
@@ -172,18 +183,31 @@ def compute_wrist_speed(
 
 
 def compute_arm_geometry(
-    wide: pd.DataFrame, hand: str, min_visibility: float = DEFAULT_MIN_VISIBILITY
+    wide: pd.DataFrame,
+    hand: str,
+    min_visibility: float = DEFAULT_MIN_VISIBILITY,
+    max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
+    savgol_window: int = DEFAULT_SAVGOL_WINDOW,
+    savgol_polyorder: int = DEFAULT_SAVGOL_POLYORDER,
 ) -> pd.DataFrame:
-    """extension_ratio, hauteur du poignet et angle épaule->poignet par frame, pour le bras `hand`."""
+    """extension_ratio, hauteur du poignet et angle épaule->poignet par frame, pour le
+    bras `hand`. Positions lissées (Savitzky-Golay) avant calcul, comme pour la
+    vitesse : le jitter de tracking sur une frame isolée peut sinon suffire à faire
+    dépasser extension_threshold à un bras qui ne frappe pas."""
     ids = ARM_LANDMARKS[hand]
-    shoulder_x, shoulder_y = _landmark_xy(wide, ids["shoulder"], min_visibility)
-    elbow_x, elbow_y = _landmark_xy(wide, ids["elbow"], min_visibility)
-    wrist_x, wrist_y = _landmark_xy(wide, ids["wrist"], min_visibility)
+
+    def smoothed(landmark_id: int) -> tuple[pd.Series, pd.Series]:
+        x, y = _landmark_xy(wide, landmark_id, min_visibility)
+        return _smoothed_xy(x, y, max_gap_frames, savgol_window, savgol_polyorder)
+
+    shoulder_x, shoulder_y = smoothed(ids["shoulder"])
+    elbow_x, elbow_y = smoothed(ids["elbow"])
+    wrist_x, wrist_y = smoothed(ids["wrist"])
 
     other_shoulder_id = RIGHT_SHOULDER_ID if hand == "left" else LEFT_SHOULDER_ID
-    other_shoulder_x, other_shoulder_y = _landmark_xy(wide, other_shoulder_id, min_visibility)
-    hip_left_x, hip_left_y = _landmark_xy(wide, LEFT_HIP_ID, min_visibility)
-    hip_right_x, hip_right_y = _landmark_xy(wide, RIGHT_HIP_ID, min_visibility)
+    other_shoulder_x, other_shoulder_y = smoothed(other_shoulder_id)
+    hip_left_x, hip_left_y = smoothed(LEFT_HIP_ID)
+    hip_right_x, hip_right_y = smoothed(RIGHT_HIP_ID)
 
     def dist(x1, y1, x2, y2):
         return np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
@@ -318,9 +342,8 @@ def segment_activity_windows(
     min_silence_ms: float = DEFAULT_MIN_SILENCE_MS,
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
     min_visibility: float = DEFAULT_MIN_VISIBILITY,
-    mincutoff: float = DEFAULT_ONE_EURO_MINCUTOFF,
-    beta: float = DEFAULT_ONE_EURO_BETA,
-    dcutoff: float = DEFAULT_ONE_EURO_DCUTOFF,
+    savgol_window: int = DEFAULT_SAVGOL_WINDOW,
+    savgol_polyorder: int = DEFAULT_SAVGOL_POLYORDER,
 ) -> list[ActivityWindow]:
     """Segmente la vidéo en fenêtres d'activité à partir de la vitesse (relative au
     tronc) du poignet le plus rapide par frame. Les silences plus courts que
@@ -329,13 +352,15 @@ def segment_activity_windows(
     combos) séparent bien deux fenêtres distinctes."""
     wide = pivot_landmarks(df)
     torso_velocity = compute_torso_center_velocity(
-        wide, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
+        wide, max_gap_frames, min_visibility, savgol_window, savgol_polyorder
     )
     left_speed = compute_wrist_speed(
-        df, LEFT_WRIST_ID, torso_velocity, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
+        df, LEFT_WRIST_ID, torso_velocity, max_gap_frames, min_visibility,
+        savgol_window, savgol_polyorder,
     ).set_index("frame_idx")["speed"]
     right_speed = compute_wrist_speed(
-        df, RIGHT_WRIST_ID, torso_velocity, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
+        df, RIGHT_WRIST_ID, torso_velocity, max_gap_frames, min_visibility,
+        savgol_window, savgol_polyorder,
     ).set_index("frame_idx")["speed"]
 
     combined = pd.concat([left_speed, right_speed], axis=1).max(axis=1, skipna=True)
@@ -403,9 +428,8 @@ def detect_strikes(
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
     min_interval_ms: float = DEFAULT_MIN_STRIKE_INTERVAL_MS,
     min_visibility: float = DEFAULT_MIN_VISIBILITY,
-    mincutoff: float = DEFAULT_ONE_EURO_MINCUTOFF,
-    beta: float = DEFAULT_ONE_EURO_BETA,
-    dcutoff: float = DEFAULT_ONE_EURO_DCUTOFF,
+    savgol_window: int = DEFAULT_SAVGOL_WINDOW,
+    savgol_polyorder: int = DEFAULT_SAVGOL_POLYORDER,
     extension_prominence: float = DEFAULT_EXTENSION_PEAK_PROMINENCE,
     extension_threshold: float = DEFAULT_EXTENSION_RATIO_THRESHOLD,
     height_fraction: float = DEFAULT_HEAD_HEIGHT_TORSO_FRACTION,
@@ -420,16 +444,18 @@ def detect_strikes(
     temps (un seul bras frappe à la fois)."""
     wide = pivot_landmarks(df)
     torso_velocity = compute_torso_center_velocity(
-        wide, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
+        wide, max_gap_frames, min_visibility, savgol_window, savgol_polyorder
     )
 
     strikes: list[Strike] = []
     for hand, landmark_id in WRIST_LANDMARKS.items():
         wrist_speed = compute_wrist_speed(
             df, landmark_id, torso_velocity, max_gap_frames, min_visibility,
-            mincutoff, beta, dcutoff,
+            savgol_window, savgol_polyorder,
         )
-        geometry = compute_arm_geometry(wide, hand, min_visibility)
+        geometry = compute_arm_geometry(
+            wide, hand, min_visibility, max_gap_frames, savgol_window, savgol_polyorder
+        )
         strikes.extend(
             detect_strikes_for_hand(
                 geometry, wrist_speed, hand, min_interval_ms, extension_prominence,
@@ -458,8 +484,8 @@ def main() -> None:
     parser.add_argument("--extension-prominence", type=float, default=DEFAULT_EXTENSION_PEAK_PROMINENCE)
     parser.add_argument("--angle-threshold", type=float, default=DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG)
     parser.add_argument("--min-peak-speed", type=float, default=DEFAULT_MIN_PEAK_SPEED)
-    parser.add_argument("--mincutoff", type=float, default=DEFAULT_ONE_EURO_MINCUTOFF)
-    parser.add_argument("--beta", type=float, default=DEFAULT_ONE_EURO_BETA)
+    parser.add_argument("--savgol-window", type=int, default=DEFAULT_SAVGOL_WINDOW)
+    parser.add_argument("--savgol-polyorder", type=int, default=DEFAULT_SAVGOL_POLYORDER)
     parser.add_argument("--min-visibility", type=float, default=DEFAULT_MIN_VISIBILITY)
     parser.add_argument(
         "--cross-hand-window", type=int, default=DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES
@@ -474,8 +500,8 @@ def main() -> None:
     strikes = detect_strikes_from_csv(
         csv_path,
         min_visibility=args.min_visibility,
-        mincutoff=args.mincutoff,
-        beta=args.beta,
+        savgol_window=args.savgol_window,
+        savgol_polyorder=args.savgol_polyorder,
         extension_threshold=args.extension_threshold,
         extension_prominence=args.extension_prominence,
         angle_threshold_deg=args.angle_threshold,
