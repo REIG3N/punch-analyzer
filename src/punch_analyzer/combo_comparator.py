@@ -17,8 +17,8 @@ from punch_analyzer.strike_detection import (
     DEFAULT_MIN_SILENCE_MS,
     DEFAULT_MIN_VISIBILITY,
     DEFAULT_MIN_WINDOW_MS,
-    DEFAULT_ONE_EURO_BETA,
-    DEFAULT_ONE_EURO_MINCUTOFF,
+    DEFAULT_SAVGOL_POLYORDER,
+    DEFAULT_SAVGOL_WINDOW,
     ActivityWindow,
     Strike,
     detect_strikes,
@@ -145,8 +145,8 @@ def main() -> None:
     parser.add_argument("--extension-prominence", type=float, default=DEFAULT_EXTENSION_PEAK_PROMINENCE)
     parser.add_argument("--angle-threshold", type=float, default=DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG)
     parser.add_argument("--min-peak-speed", type=float, default=DEFAULT_MIN_PEAK_SPEED)
-    parser.add_argument("--mincutoff", type=float, default=DEFAULT_ONE_EURO_MINCUTOFF)
-    parser.add_argument("--beta", type=float, default=DEFAULT_ONE_EURO_BETA)
+    parser.add_argument("--savgol-window", type=int, default=DEFAULT_SAVGOL_WINDOW)
+    parser.add_argument("--savgol-polyorder", type=int, default=DEFAULT_SAVGOL_POLYORDER)
     parser.add_argument("--min-visibility", type=float, default=DEFAULT_MIN_VISIBILITY)
     parser.add_argument(
         "--geometric-window-frames", type=int, default=DEFAULT_GEOMETRIC_CONFIRM_WINDOW_FRAMES
@@ -170,14 +170,14 @@ def main() -> None:
         min_window_ms=args.min_window_ms,
         min_silence_ms=args.min_silence_ms,
         min_visibility=args.min_visibility,
-        mincutoff=args.mincutoff,
-        beta=args.beta,
+        savgol_window=args.savgol_window,
+        savgol_polyorder=args.savgol_polyorder,
     )
     strikes = detect_strikes(
         df,
         min_visibility=args.min_visibility,
-        mincutoff=args.mincutoff,
-        beta=args.beta,
+        savgol_window=args.savgol_window,
+        savgol_polyorder=args.savgol_polyorder,
         extension_threshold=args.extension_threshold,
         extension_prominence=args.extension_prominence,
         angle_threshold_deg=args.angle_threshold,
