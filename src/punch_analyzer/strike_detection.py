@@ -38,6 +38,11 @@ DEFAULT_HEAD_HEIGHT_TORSO_FRACTION = 1 / 3
 DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG = 35.0
 DEFAULT_MIN_PEAK_SPEED = 1.5
 DEFAULT_GEOMETRIC_CONFIRM_WINDOW_FRAMES = 5
+DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES = DEFAULT_GEOMETRIC_CONFIRM_WINDOW_FRAMES
+
+DEFAULT_ACTIVITY_THRESHOLD = 0.3
+DEFAULT_MIN_WINDOW_MS = 300.0
+DEFAULT_MIN_SILENCE_MS = 1200.0
 
 
 @dataclass
@@ -298,6 +303,101 @@ def detect_strikes_for_hand(
     return strikes
 
 
+@dataclass
+class ActivityWindow:
+    start_frame: int
+    end_frame: int
+    start_ms: float
+    end_ms: float
+
+
+def segment_activity_windows(
+    df: pd.DataFrame,
+    activity_threshold: float = DEFAULT_ACTIVITY_THRESHOLD,
+    min_window_ms: float = DEFAULT_MIN_WINDOW_MS,
+    min_silence_ms: float = DEFAULT_MIN_SILENCE_MS,
+    max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
+    min_visibility: float = DEFAULT_MIN_VISIBILITY,
+    mincutoff: float = DEFAULT_ONE_EURO_MINCUTOFF,
+    beta: float = DEFAULT_ONE_EURO_BETA,
+    dcutoff: float = DEFAULT_ONE_EURO_DCUTOFF,
+) -> list[ActivityWindow]:
+    """Segmente la vidéo en fenêtres d'activité à partir de la vitesse (relative au
+    tronc) du poignet le plus rapide par frame. Les silences plus courts que
+    min_silence_ms sont pontés (hystérésis) pour ne pas fragmenter un combo qui
+    ralentit brièvement en son milieu ; les silences plus longs (pauses entre
+    combos) séparent bien deux fenêtres distinctes."""
+    wide = pivot_landmarks(df)
+    torso_velocity = compute_torso_center_velocity(
+        wide, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
+    )
+    left_speed = compute_wrist_speed(
+        df, LEFT_WRIST_ID, torso_velocity, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
+    ).set_index("frame_idx")["speed"]
+    right_speed = compute_wrist_speed(
+        df, RIGHT_WRIST_ID, torso_velocity, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
+    ).set_index("frame_idx")["speed"]
+
+    combined = pd.concat([left_speed, right_speed], axis=1).max(axis=1, skipna=True)
+    combined = combined.fillna(0.0).sort_index()
+    timestamps = wide.set_index("frame_idx")["timestamp_ms"].reindex(combined.index)
+
+    median_dt_ms = timestamps.diff().median()
+    if not median_dt_ms or median_dt_ms <= 0:
+        return []
+    min_silence_frames = max(1, round(min_silence_ms / median_dt_ms))
+    min_window_frames = max(1, round(min_window_ms / median_dt_ms))
+
+    active = combined > activity_threshold
+    inactive = ~active
+    run_id = (inactive != inactive.shift()).cumsum()
+    run_length = inactive.groupby(run_id).transform("sum")
+    bridgeable_silence = inactive & (run_length <= min_silence_frames)
+    bridged_active = active | bridgeable_silence
+
+    windows: list[ActivityWindow] = []
+    window_id = (bridged_active != bridged_active.shift()).cumsum()
+    for _, group in bridged_active.groupby(window_id):
+        if not bool(group.iloc[0]):
+            continue
+        frames = group.index
+        if len(frames) < min_window_frames:
+            continue
+        start_frame, end_frame = int(frames.min()), int(frames.max())
+        windows.append(
+            ActivityWindow(
+                start_frame=start_frame,
+                end_frame=end_frame,
+                start_ms=float(timestamps.loc[start_frame]),
+                end_ms=float(timestamps.loc[end_frame]),
+            )
+        )
+    return windows
+
+
+def _arbitrate_cross_hand(strikes: list[Strike], window_frames: int) -> None:
+    """Physiquement, un seul bras frappe à la fois (jab/cross) : si gauche et droite
+    sont confirmés dans la même fenêtre temporelle, ne garder que l'extension_ratio
+    le plus élevé et rejeter l'autre (mute geometric_pass, le candidat reste visible)."""
+    confirmed = sorted((s for s in strikes if s.geometric_pass), key=lambda s: s.frame_idx)
+
+    i = 0
+    while i < len(confirmed):
+        cluster = [confirmed[i]]
+        j = i + 1
+        while j < len(confirmed) and confirmed[j].frame_idx - cluster[-1].frame_idx <= window_frames:
+            cluster.append(confirmed[j])
+            j += 1
+
+        if len({s.hand for s in cluster}) > 1:
+            winner = max(cluster, key=lambda s: s.extension_ratio or 0.0)
+            for s in cluster:
+                if s is not winner:
+                    s.geometric_pass = False
+
+        i = j
+
+
 def detect_strikes(
     df: pd.DataFrame,
     max_gap_frames: int = DEFAULT_MAX_GAP_FRAMES,
@@ -312,9 +412,12 @@ def detect_strikes(
     angle_threshold_deg: float = DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG,
     min_peak_speed: float = DEFAULT_MIN_PEAK_SPEED,
     geometric_window_frames: int = DEFAULT_GEOMETRIC_CONFIRM_WINDOW_FRAMES,
+    cross_hand_window_frames: int = DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES,
 ) -> list[Strike]:
     """Détecte les coups pour les deux poignets (séries indépendantes) : un coup est
-    un pic local d'extension du bras (jab/cross), confirmé par hauteur/direction/vitesse."""
+    un pic local d'extension du bras (jab/cross), confirmé par hauteur/direction/vitesse.
+    Arbitrage croisé ensuite : gauche et droite ne peuvent pas être confirmés en même
+    temps (un seul bras frappe à la fois)."""
     wide = pivot_landmarks(df)
     torso_velocity = compute_torso_center_velocity(
         wide, max_gap_frames, min_visibility, mincutoff, beta, dcutoff
@@ -335,7 +438,9 @@ def detect_strikes(
             )
         )
 
-    return sorted(strikes, key=lambda s: s.timestamp_ms)
+    strikes.sort(key=lambda s: s.timestamp_ms)
+    _arbitrate_cross_hand(strikes, cross_hand_window_frames)
+    return strikes
 
 
 def detect_strikes_from_csv(csv_path: Path, **kwargs) -> list[Strike]:
@@ -356,6 +461,9 @@ def main() -> None:
     parser.add_argument("--mincutoff", type=float, default=DEFAULT_ONE_EURO_MINCUTOFF)
     parser.add_argument("--beta", type=float, default=DEFAULT_ONE_EURO_BETA)
     parser.add_argument("--min-visibility", type=float, default=DEFAULT_MIN_VISIBILITY)
+    parser.add_argument(
+        "--cross-hand-window", type=int, default=DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES
+    )
     args = parser.parse_args()
 
     csv_path = csv_path_for_video(args.video, args.csv_dir)
@@ -372,6 +480,7 @@ def main() -> None:
         extension_prominence=args.extension_prominence,
         angle_threshold_deg=args.angle_threshold,
         min_peak_speed=args.min_peak_speed,
+        cross_hand_window_frames=args.cross_hand_window,
     )
     left_count = sum(1 for s in strikes if s.hand == "left")
     right_count = sum(1 for s in strikes if s.hand == "right")
