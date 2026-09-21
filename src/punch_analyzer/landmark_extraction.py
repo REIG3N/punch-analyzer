@@ -15,10 +15,6 @@ from punch_analyzer.paths import (
     csv_path_for_video,
 )
 
-START_TIME_MS = (
-    120000  # commence à 120 s (ajustez selon votre timing d'intro + corde à sauter)
-)
-
 TRACKED_INDICES = [
     11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
@@ -94,7 +90,8 @@ def process_video(
     landmarker: vision.PoseLandmarker,
     video_path: Path,
     output_dir: Path = CSV_OUTPUT_DIR,
-    start_ms: int = START_TIME_MS,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
 ) -> None:
     video = cv2.VideoCapture(str(video_path))
     if not video.isOpened():
@@ -102,7 +99,8 @@ def process_video(
         return
 
     fps = video.get(cv2.CAP_PROP_FPS)
-    video.set(cv2.CAP_PROP_POS_MSEC, start_ms)
+    if start_ms:
+        video.set(cv2.CAP_PROP_POS_MSEC, start_ms)
     frame_idx = 0
     csv_rows = []
 
@@ -114,10 +112,13 @@ def process_video(
         if not ret:
             break
 
+        timestamp_ms = int(frame_idx * 1000 / fps)
+        if end_ms is not None and (start_ms or 0) + timestamp_ms > end_ms:
+            break
+
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        timestamp_ms = int(frame_idx * 1000 / fps)
 
         detection_result = landmarker.detect_for_video(mp_image, timestamp_ms)
         csv_rows.extend(build_csv_rows(detection_result, frame_idx, timestamp_ms))
@@ -151,11 +152,12 @@ def main() -> None:
     )
     parser.add_argument("--video", type=Path, default=VIDEO_PATH)
     parser.add_argument("--output-dir", type=Path, default=CSV_OUTPUT_DIR)
-    parser.add_argument("--start-ms", type=int, default=START_TIME_MS)
+    parser.add_argument("--start-ms", type=int, default=None)
+    parser.add_argument("--end-ms", type=int, default=None)
     args = parser.parse_args()
 
     with load_landmarker() as landmarker:
-        process_video(landmarker, args.video, args.output_dir, args.start_ms)
+        process_video(landmarker, args.video, args.output_dir, args.start_ms, args.end_ms)
 
 
 if __name__ == "__main__":
