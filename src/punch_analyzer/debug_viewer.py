@@ -4,9 +4,10 @@ from pathlib import Path
 import cv2
 import pandas as pd
 
-from punch_analyzer.landmark_extraction import START_TIME_MS, draw_skeleton
+from punch_analyzer.landmark_extraction import draw_skeleton
 from punch_analyzer.paths import CSV_OUTPUT_DIR, VIDEO_PATH, csv_path_for_video
 from punch_analyzer.strike_detection import (
+    DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES,
     DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG,
     DEFAULT_EXTENSION_PEAK_PROMINENCE,
     DEFAULT_EXTENSION_RATIO_THRESHOLD,
@@ -157,7 +158,7 @@ def _no_op(_value: int) -> None:
 def run_debug_viewer(
     video_path: Path,
     output_dir: Path = CSV_OUTPUT_DIR,
-    start_ms: int = START_TIME_MS,
+    start_ms: int | None = None,
     min_visibility: float = DEFAULT_MIN_VISIBILITY,
     mincutoff: float = DEFAULT_ONE_EURO_MINCUTOFF,
     beta: float = DEFAULT_ONE_EURO_BETA,
@@ -167,6 +168,7 @@ def run_debug_viewer(
     height_fraction: float = DEFAULT_HEAD_HEIGHT_TORSO_FRACTION,
     angle_threshold_deg: float = DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG,
     min_peak_speed: float = DEFAULT_MIN_PEAK_SPEED,
+    cross_hand_window_frames: int = DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES,
 ) -> None:
     csv_path = csv_path_for_video(video_path, output_dir)
     if not csv_path.exists():
@@ -205,6 +207,7 @@ def run_debug_viewer(
         height_fraction=height_fraction,
         angle_threshold_deg=angle_threshold_deg,
         min_peak_speed=min_peak_speed,
+        cross_hand_window_frames=cross_hand_window_frames,
     )
     confirmed_count = sum(1 for s in strikes if s.geometric_pass)
     print(
@@ -232,7 +235,7 @@ def run_debug_viewer(
     # la vidéo), pas à la frame 0 absolue de la vidéo : on reproduit le
     # même seek que landmark_extraction.process_video() pour retrouver
     # l'offset réel, plutôt que de le recalculer via fps (arrondi imprécis).
-    video.set(cv2.CAP_PROP_POS_MSEC, start_ms)
+    video.set(cv2.CAP_PROP_POS_MSEC, start_ms or 0)
     frame_offset = int(video.get(cv2.CAP_PROP_POS_FRAMES))
 
     csv_frame_count = int(df["frame_idx"].max()) + 1 if not df.empty else 0
@@ -307,7 +310,7 @@ def main() -> None:
     )
     parser.add_argument("--video", type=Path, default=VIDEO_PATH)
     parser.add_argument("--csv-dir", type=Path, default=CSV_OUTPUT_DIR)
-    parser.add_argument("--start-ms", type=int, default=START_TIME_MS)
+    parser.add_argument("--start-ms", type=int, default=None)
     parser.add_argument("--min-visibility", type=float, default=DEFAULT_MIN_VISIBILITY)
     parser.add_argument("--mincutoff", type=float, default=DEFAULT_ONE_EURO_MINCUTOFF)
     parser.add_argument("--beta", type=float, default=DEFAULT_ONE_EURO_BETA)
@@ -315,6 +318,9 @@ def main() -> None:
     parser.add_argument("--extension-prominence", type=float, default=DEFAULT_EXTENSION_PEAK_PROMINENCE)
     parser.add_argument("--angle-threshold", type=float, default=DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG)
     parser.add_argument("--min-peak-speed", type=float, default=DEFAULT_MIN_PEAK_SPEED)
+    parser.add_argument(
+        "--cross-hand-window", type=int, default=DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES
+    )
     args = parser.parse_args()
     run_debug_viewer(
         args.video,
@@ -327,6 +333,7 @@ def main() -> None:
         extension_prominence=args.extension_prominence,
         angle_threshold_deg=args.angle_threshold,
         min_peak_speed=args.min_peak_speed,
+        cross_hand_window_frames=args.cross_hand_window,
     )
 
 
