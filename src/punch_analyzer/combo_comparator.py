@@ -97,6 +97,27 @@ def score_combos(
     return scores
 
 
+def format_window_report(windows: list[ActivityWindow]) -> list[str]:
+    """Une ligne par fenêtre : début, fin, durée, silence depuis la fenêtre
+    précédente -- pour voir à l'œil si des combos courts ont fusionné (silence
+    trop court pour le seuil de coupure) ou disparu (durée jamais atteinte),
+    avant de toucher aux seuils de segmentation."""
+    lines = []
+    previous_end_ms: float | None = None
+    for i, window in enumerate(windows, start=1):
+        duration_s = (window.end_ms - window.start_ms) / 1000
+        if previous_end_ms is None:
+            gap_str = "N/A"
+        else:
+            gap_str = f"{(window.start_ms - previous_end_ms) / 1000:.2f}s"
+        lines.append(
+            f"  [{i:>2}] {window.start_ms / 1000:>6.2f}s -> {window.end_ms / 1000:>6.2f}s "
+            f"(durée {duration_s:>5.2f}s, silence avant {gap_str})"
+        )
+        previous_end_ms = window.end_ms
+    return lines
+
+
 def print_report(scores: list[ComboScore]) -> None:
     exact_matches = 0
     total_expected_left = total_expected_right = 0
@@ -187,6 +208,9 @@ def main() -> None:
     )
 
     print(f"{len(windows)} fenêtres d'activité détectées, {len(combos)} combos attendus")
+    for line in format_window_report(windows):
+        print(line)
+    print()
     if len(windows) != len(combos):
         print(
             "ATTENTION : nombre de fenêtres != nombre de combos attendus -- "
