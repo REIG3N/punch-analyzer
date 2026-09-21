@@ -15,8 +15,8 @@ from punch_analyzer.strike_detection import (
     DEFAULT_HEAD_HEIGHT_TORSO_FRACTION,
     DEFAULT_MIN_PEAK_SPEED,
     DEFAULT_MIN_VISIBILITY,
-    DEFAULT_ONE_EURO_BETA,
-    DEFAULT_ONE_EURO_MINCUTOFF,
+    DEFAULT_SAVGOL_POLYORDER,
+    DEFAULT_SAVGOL_WINDOW,
     LEFT_WRIST_ID,
     RIGHT_WRIST_ID,
     Strike,
@@ -160,8 +160,8 @@ def run_debug_viewer(
     output_dir: Path = CSV_OUTPUT_DIR,
     start_ms: int | None = None,
     min_visibility: float = DEFAULT_MIN_VISIBILITY,
-    mincutoff: float = DEFAULT_ONE_EURO_MINCUTOFF,
-    beta: float = DEFAULT_ONE_EURO_BETA,
+    savgol_window: int = DEFAULT_SAVGOL_WINDOW,
+    savgol_polyorder: int = DEFAULT_SAVGOL_POLYORDER,
     geometric_window_frames: int = DEFAULT_GEOMETRIC_CONFIRM_WINDOW_FRAMES,
     extension_threshold: float = DEFAULT_EXTENSION_RATIO_THRESHOLD,
     extension_prominence: float = DEFAULT_EXTENSION_PEAK_PROMINENCE,
@@ -180,27 +180,30 @@ def run_debug_viewer(
 
     wide = pivot_landmarks(df)
     torso_velocity = compute_torso_center_velocity(wide, min_visibility=min_visibility,
-                                                     mincutoff=mincutoff, beta=beta)
+                                                     savgol_window=savgol_window,
+                                                     savgol_polyorder=savgol_polyorder)
     left_speed_lookup = build_speed_lookup(
         compute_wrist_speed(df, LEFT_WRIST_ID, torso_velocity, min_visibility=min_visibility,
-                             mincutoff=mincutoff, beta=beta)
+                             savgol_window=savgol_window, savgol_polyorder=savgol_polyorder)
     )
     right_speed_lookup = build_speed_lookup(
         compute_wrist_speed(df, RIGHT_WRIST_ID, torso_velocity, min_visibility=min_visibility,
-                             mincutoff=mincutoff, beta=beta)
+                             savgol_window=savgol_window, savgol_polyorder=savgol_polyorder)
     )
     left_extension_lookup = build_extension_lookup(
-        compute_arm_geometry(wide, "left", min_visibility)
+        compute_arm_geometry(wide, "left", min_visibility,
+                              savgol_window=savgol_window, savgol_polyorder=savgol_polyorder)
     )
     right_extension_lookup = build_extension_lookup(
-        compute_arm_geometry(wide, "right", min_visibility)
+        compute_arm_geometry(wide, "right", min_visibility,
+                              savgol_window=savgol_window, savgol_polyorder=savgol_polyorder)
     )
 
     strikes = detect_strikes(
         df,
         min_visibility=min_visibility,
-        mincutoff=mincutoff,
-        beta=beta,
+        savgol_window=savgol_window,
+        savgol_polyorder=savgol_polyorder,
         geometric_window_frames=geometric_window_frames,
         extension_threshold=extension_threshold,
         extension_prominence=extension_prominence,
@@ -217,7 +220,8 @@ def run_debug_viewer(
     print(
         f"seuils actifs : extension>{extension_threshold} (prominence={extension_prominence}) "
         f"angle<{angle_threshold_deg}° min_peak_speed={min_peak_speed} "
-        f"mincutoff={mincutoff} beta={beta} min_visibility={min_visibility}"
+        f"savgol_window={savgol_window} savgol_polyorder={savgol_polyorder} "
+        f"min_visibility={min_visibility}"
     )
     print(CONTROLS_HELP)
 
@@ -312,8 +316,8 @@ def main() -> None:
     parser.add_argument("--csv-dir", type=Path, default=CSV_OUTPUT_DIR)
     parser.add_argument("--start-ms", type=int, default=None)
     parser.add_argument("--min-visibility", type=float, default=DEFAULT_MIN_VISIBILITY)
-    parser.add_argument("--mincutoff", type=float, default=DEFAULT_ONE_EURO_MINCUTOFF)
-    parser.add_argument("--beta", type=float, default=DEFAULT_ONE_EURO_BETA)
+    parser.add_argument("--savgol-window", type=int, default=DEFAULT_SAVGOL_WINDOW)
+    parser.add_argument("--savgol-polyorder", type=int, default=DEFAULT_SAVGOL_POLYORDER)
     parser.add_argument("--extension-threshold", type=float, default=DEFAULT_EXTENSION_RATIO_THRESHOLD)
     parser.add_argument("--extension-prominence", type=float, default=DEFAULT_EXTENSION_PEAK_PROMINENCE)
     parser.add_argument("--angle-threshold", type=float, default=DEFAULT_DIRECTION_ANGLE_THRESHOLD_DEG)
@@ -327,8 +331,8 @@ def main() -> None:
         args.csv_dir,
         args.start_ms,
         min_visibility=args.min_visibility,
-        mincutoff=args.mincutoff,
-        beta=args.beta,
+        savgol_window=args.savgol_window,
+        savgol_polyorder=args.savgol_polyorder,
         extension_threshold=args.extension_threshold,
         extension_prominence=args.extension_prominence,
         angle_threshold_deg=args.angle_threshold,
