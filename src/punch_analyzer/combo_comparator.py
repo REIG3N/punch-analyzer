@@ -44,6 +44,7 @@ class ComboScore:
     detected_right: int
     confirmed_left: int
     confirmed_right: int
+    strikes: list[Strike]  # tous les coups détectés dans la fenêtre, triés par frame_idx
 
     @property
     def left_match(self) -> bool:
@@ -92,6 +93,7 @@ def score_combos(
                 detected_right=len(right),
                 confirmed_left=sum(1 for s in left if s.geometric_pass),
                 confirmed_right=sum(1 for s in right if s.geometric_pass),
+                strikes=sorted(window_strikes, key=lambda s: s.frame_idx),
             )
         )
     return scores
@@ -133,6 +135,13 @@ def print_report(scores: list[ComboScore]) -> None:
             f"droite {score.confirmed_right}/{score.expected_right} confirmés "
             f"(détectés {score.detected_right})"
         )
+        for strike in score.strikes:
+            status = "confirmé" if strike.geometric_pass else "non confirmé"
+            ext = f"{strike.extension_ratio:.3f}" if strike.extension_ratio is not None else "N/A"
+            print(
+                f"        [{strike.hand}] {strike.timestamp_ms / 1000:.2f}s "
+                f"pic vitesse={strike.speed:.3f} ext={ext} ({status})"
+            )
         if score.left_match and score.right_match:
             exact_matches += 1
         total_expected_left += score.expected_left
