@@ -1,3 +1,4 @@
+import argparse
 import csv
 import math
 from pathlib import Path
@@ -7,13 +8,11 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-MODEL_ASSET_PATH = PROJECT_ROOT / "data" / "pose_landmarker_full.task"
-VIDEO_PATH = PROJECT_ROOT / "video" / "videoplayback.mp4"
-CSV_OUTPUT_DIR = PROJECT_ROOT / "data" / "csv"
-
-START_TIME_MS = (
-    120000  # commence à 120 s (ajustez selon votre timing d'intro + corde à sauter)
+from punch_analyzer.paths import (
+    CSV_OUTPUT_DIR,
+    MODEL_ASSET_PATH,
+    VIDEO_PATH,
+    csv_path_for_video,
 )
 
 TRACKED_INDICES = [
@@ -91,29 +90,43 @@ def process_video(
     landmarker: vision.PoseLandmarker,
     video_path: Path,
     output_dir: Path = CSV_OUTPUT_DIR,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    buffer_ms: int = 0,
 ) -> None:
+    """buffer_ms : marge extraite AVANT start_ms (jamais recadrée ici -- reste dans
+    le CSV, frame_idx=0 correspond à start_ms-buffer_ms). Évite qu'un mouvement
+    rapide au tout début du signal utile tombe pile sur le bord du lissage
+    Savitzky-Golay, où son pic peut être écrasé plutôt que simplement atténué.
+    Les consommateurs du CSV (combo_comparator, signal_inspector) doivent recevoir
+    le même buffer_ms pour recadrer au moment du score/de l'affichage, pas ici."""
     video = cv2.VideoCapture(str(video_path))
     if not video.isOpened():
         print("Erreur: vidéo non trouvée ou illisible")
         return
 
     fps = video.get(cv2.CAP_PROP_FPS)
-    video.set(cv2.CAP_PROP_POS_MSEC, START_TIME_MS)
+    seek_ms = max(0, (start_ms or 0) - buffer_ms)
+    if seek_ms:
+        video.set(cv2.CAP_PROP_POS_MSEC, seek_ms)
     frame_idx = 0
     csv_rows = []
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{video_path.stem}.csv"
+    output_path = csv_path_for_video(video_path, output_dir)
 
     while video.isOpened():
         ret, frame = video.read()
         if not ret:
             break
 
+        timestamp_ms = int(frame_idx * 1000 / fps)
+        if end_ms is not None and seek_ms + timestamp_ms > end_ms:
+            break
+
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         rgb.flags.writeable = False
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        timestamp_ms = int(frame_idx * 1000 / fps)
 
         detection_result = landmarker.detect_for_video(mp_image, timestamp_ms)
         csv_rows.extend(build_csv_rows(detection_result, frame_idx, timestamp_ms))
@@ -142,8 +155,23 @@ def process_video(
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Extraction des landmarks de pose depuis une vidéo vers CSV."
+    )
+    parser.add_argument("--video", type=Path, default=VIDEO_PATH)
+    parser.add_argument("--output-dir", type=Path, default=CSV_OUTPUT_DIR)
+    parser.add_argument("--start-ms", type=int, default=None)
+    parser.add_argument("--end-ms", type=int, default=None)
+    parser.add_argument(
+        "--buffer-ms", type=int, default=0,
+        help="Marge extraite avant --start-ms (non recadrée ici, cf. process_video()).",
+    )
+    args = parser.parse_args()
+
     with load_landmarker() as landmarker:
-        process_video(landmarker, VIDEO_PATH)
+        process_video(
+            landmarker, args.video, args.output_dir, args.start_ms, args.end_ms, args.buffer_ms
+        )
 
 
 if __name__ == "__main__":

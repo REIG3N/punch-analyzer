@@ -1,0 +1,152 @@
+[
+  {
+    "name": "1",
+    "left": 1,
+    "right": 0
+  },
+  {
+    "name": "2",
+    "left": 0,
+    "right": 1
+  },
+  {
+    "name": "1-1",
+    "left": 2,
+    "right": 0
+  },
+  {
+    "name": "1-2",
+    "left": 1,
+    "right": 1
+  },
+  {
+    "name": "2-1",
+    "left": 1,
+    "right": 1
+  },
+  {
+    "name": "2-2",
+    "left": 0,
+    "right": 2
+  },
+  {
+    "name": "1-1-1",
+    "left": 3,
+    "right": 0
+  },
+  {
+    "name": "1-1-2",
+    "left": 2,
+    "right": 1
+  },
+  {
+    "name": "1-2-1",
+    "left": 2,
+    "right": 1
+  },
+  {
+    "name": "1-2-2",
+    "left": 1,
+    "right": 2
+  },
+  {
+    "name": "2-1-1",
+    "left": 2,
+    "right": 1
+  },
+  {
+    "name": "2-1-2",
+    "left": 1,
+    "right": 2
+  },
+  {
+    "name": "2-2-1",
+    "left": 1,
+    "right": 2
+  },
+  {
+    "name": "2-2-2",
+    "left": 0,
+    "right": 3
+  },
+  {
+    "name": "1-1-1-1",
+    "left": 4,
+    "right": 0
+  },
+  {
+    "name": "1-1-1-2",
+    "left": 3,
+    "right": 1
+  },
+  {
+    "name": "1-1-2-1",
+    "left": 3,
+    "right": 1
+  },
+  {
+    "name": "1-1-2-2",
+    "left": 2,
+    "right": 2
+  },
+  {
+    "name": "1-2-1-1",
+    "left": 3,
+    "right": 1
+  },
+  {
+    "name": "1-2-1-2",
+    "left": 2,
+    "right": 2
+  },
+  {
+    "name": "1-2-2-1",
+    "left": 2,
+    "right": 2
+  },
+  {
+    "name": "1-2-2-2",
+    "left": 1,
+    "right": 3
+  },
+  {
+    "name": "2-1-1-1",
+    "left": 3,
+    "right": 1
+  },
+  {
+    "name": "2-1-1-2",
+    "left": 2,
+    "right": 2
+  },
+  {
+    "name": "2-1-2-1",
+    "left": 2,
+    "right": 2
+  },
+  {
+    "name": "2-1-2-2",
+    "left": 1,
+    "right": 3
+  },
+  {
+    "name": "2-2-1-1",
+    "left": 2,
+    "right": 2
+  },
+  {
+    "name": "2-2-1-2",
+    "left": 1,
+    "right": 3
+  },
+  {
+    "name": "2-2-2-1",
+    "left": 1,
+    "right": 3
+  },
+  {
+    "name": "2-2-2-2",
+    "left": 0,
+    "right": 4
+  }
+]
