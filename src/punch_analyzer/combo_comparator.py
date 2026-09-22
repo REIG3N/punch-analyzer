@@ -69,6 +69,17 @@ def strikes_in_window(strikes: list[Strike], window: ActivityWindow) -> list[Str
     return [s for s in strikes if window.start_frame <= s.frame_idx <= window.end_frame]
 
 
+def filter_buffer_windows(windows: list[ActivityWindow], buffer_ms: float) -> list[ActivityWindow]:
+    """Retire les fenêtres entièrement contenues dans la marge d'extraction avant
+    start_ms (buffer_ms) -- lissage et détection ont tourné dessus, mais ce n'est
+    pas du vrai contenu de combo, ne doit pas compter dans le score."""
+    return [w for w in windows if w.end_ms > buffer_ms]
+
+
+def filter_buffer_strikes(strikes: list[Strike], buffer_ms: float) -> list[Strike]:
+    return [s for s in strikes if s.timestamp_ms >= buffer_ms]
+
+
 def score_combos(
     windows: list[ActivityWindow],
     strikes: list[Strike],
@@ -99,11 +110,12 @@ def score_combos(
     return scores
 
 
-def format_window_report(windows: list[ActivityWindow]) -> list[str]:
+def format_window_report(windows: list[ActivityWindow], buffer_ms: float = 0) -> list[str]:
     """Une ligne par fenêtre : début, fin, durée, silence depuis la fenêtre
     précédente -- pour voir à l'œil si des combos courts ont fusionné (silence
     trop court pour le seuil de coupure) ou disparu (durée jamais atteinte),
-    avant de toucher aux seuils de segmentation."""
+    avant de toucher aux seuils de segmentation. Les heures affichées sont
+    relatives à start_ms (buffer_ms déjà retranché), pas au CSV brut."""
     lines = []
     previous_end_ms: float | None = None
     for i, window in enumerate(windows, start=1):
@@ -113,14 +125,16 @@ def format_window_report(windows: list[ActivityWindow]) -> list[str]:
         else:
             gap_str = f"{(window.start_ms - previous_end_ms) / 1000:.2f}s"
         lines.append(
-            f"  [{i:>2}] {window.start_ms / 1000:>6.2f}s -> {window.end_ms / 1000:>6.2f}s "
+            f"  [{i:>2}] {(window.start_ms - buffer_ms) / 1000:>6.2f}s -> "
+            f"{(window.end_ms - buffer_ms) / 1000:>6.2f}s "
             f"(durée {duration_s:>5.2f}s, silence avant {gap_str})"
         )
         previous_end_ms = window.end_ms
     return lines
 
 
-def print_report(scores: list[ComboScore]) -> None:
+def print_report(scores: list[ComboScore], buffer_ms: float = 0) -> None:
+    """Les heures affichées sont relatives à start_ms (buffer_ms déjà retranché)."""
     exact_matches = 0
     total_expected_left = total_expected_right = 0
     total_confirmed_left = total_confirmed_right = 0
@@ -129,7 +143,8 @@ def print_report(scores: list[ComboScore]) -> None:
         marker = "OK" if score.left_match and score.right_match else "!!"
         print(
             f"[{marker}] combo {score.index:>2} \"{score.name}\" "
-            f"({score.window.start_ms / 1000:.2f}s-{score.window.end_ms / 1000:.2f}s) : "
+            f"({(score.window.start_ms - buffer_ms) / 1000:.2f}s-"
+            f"{(score.window.end_ms - buffer_ms) / 1000:.2f}s) : "
             f"gauche {score.confirmed_left}/{score.expected_left} confirmés "
             f"(détectés {score.detected_left}) -- "
             f"droite {score.confirmed_right}/{score.expected_right} confirmés "
@@ -139,7 +154,7 @@ def print_report(scores: list[ComboScore]) -> None:
             status = "confirmé" if strike.geometric_pass else "non confirmé"
             ext = f"{strike.extension_ratio:.3f}" if strike.extension_ratio is not None else "N/A"
             print(
-                f"        [{strike.hand}] {strike.timestamp_ms / 1000:.2f}s "
+                f"        [{strike.hand}] {(strike.timestamp_ms - buffer_ms) / 1000:.2f}s "
                 f"pic vitesse={strike.speed:.3f} ext={ext} ({status})"
             )
         if score.left_match and score.right_match:
@@ -167,6 +182,11 @@ def main() -> None:
     parser.add_argument(
         "--combos", type=Path, required=True,
         help="Chemin vers un JSON listant les combos attendus, voir load_combo_list().",
+    )
+    parser.add_argument(
+        "--buffer-ms", type=float, default=0,
+        help="Même valeur que --buffer-ms passé à landmark_extraction pour ce CSV -- "
+        "fenêtres/coups dans la marge sont retirés du score, heures affichées recadrées.",
     )
     parser.add_argument("--activity-threshold", type=float, default=DEFAULT_ACTIVITY_THRESHOLD)
     parser.add_argument("--min-window-ms", type=float, default=DEFAULT_MIN_WINDOW_MS)
@@ -216,8 +236,20 @@ def main() -> None:
         cross_hand_window_frames=args.cross_hand_window,
     )
 
+    if args.buffer_ms:
+        dropped_windows = len(windows)
+        windows = filter_buffer_windows(windows, args.buffer_ms)
+        dropped_windows -= len(windows)
+        dropped_strikes = len(strikes)
+        strikes = filter_buffer_strikes(strikes, args.buffer_ms)
+        dropped_strikes -= len(strikes)
+        print(
+            f"buffer_ms={args.buffer_ms:.0f} appliqué : {dropped_windows} fenêtre(s) et "
+            f"{dropped_strikes} coup(s) dans la marge retirés avant score."
+        )
+
     print(f"{len(windows)} fenêtres d'activité détectées, {len(combos)} combos attendus")
-    for line in format_window_report(windows):
+    for line in format_window_report(windows, args.buffer_ms):
         print(line)
     print()
     if len(windows) != len(combos):
@@ -231,7 +263,7 @@ def main() -> None:
     print()
 
     scores = score_combos(windows, strikes, combos)
-    print_report(scores)
+    print_report(scores, args.buffer_ms)
 
 
 if __name__ == "__main__":
