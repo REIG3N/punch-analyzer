@@ -437,11 +437,13 @@ def detect_strikes(
     min_peak_speed: float = DEFAULT_MIN_PEAK_SPEED,
     geometric_window_frames: int = DEFAULT_GEOMETRIC_CONFIRM_WINDOW_FRAMES,
     cross_hand_window_frames: int = DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES,
+    min_peak_speed_by_hand: dict[str, float] | None = None,
 ) -> list[Strike]:
     """Détecte les coups pour les deux poignets (séries indépendantes) : un coup est
     un pic local d'extension du bras (jab/cross), confirmé par hauteur/direction/vitesse.
     Arbitrage croisé ensuite : gauche et droite ne peuvent pas être confirmés en même
-    temps (un seul bras frappe à la fois)."""
+    temps (un seul bras frappe à la fois). min_peak_speed_by_hand, si fourni, remplace
+    min_peak_speed pour la main correspondante (calibration par main)."""
     wide = pivot_landmarks(df)
     torso_velocity = compute_torso_center_velocity(
         wide, max_gap_frames, min_visibility, savgol_window, savgol_polyorder
@@ -456,11 +458,14 @@ def detect_strikes(
         geometry = compute_arm_geometry(
             wide, hand, min_visibility, max_gap_frames, savgol_window, savgol_polyorder
         )
+        hand_min_peak_speed = (
+            min_peak_speed_by_hand[hand] if min_peak_speed_by_hand else min_peak_speed
+        )
         strikes.extend(
             detect_strikes_for_hand(
                 geometry, wrist_speed, hand, min_interval_ms, extension_prominence,
                 extension_threshold, height_fraction, angle_threshold_deg,
-                min_peak_speed, geometric_window_frames,
+                hand_min_peak_speed, geometric_window_frames,
             )
         )
 
