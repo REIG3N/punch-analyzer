@@ -111,3 +111,17 @@ def test_format_window_report_shows_duration_and_gap_since_previous():
     assert "N/A" in lines[0]  # pas de fenêtre précédente
     assert "4.00s" in lines[1] and "4.30s" in lines[1]
     assert "2.50s" in lines[1]  # silence = 4.00s - 1.50s
+
+
+def test_score_combos_keeps_individual_strikes_sorted_for_peak_speed_reporting():
+    windows = [ActivityWindow(start_frame=0, end_frame=30, start_ms=0.0, end_ms=1000.0)]
+    strikes = [
+        _strike("right", 20),
+        _strike("left", 5),
+    ]
+    combos = [ComboExpectation(name="1-2", left=1, right=1)]
+
+    scores = score_combos(windows, strikes, combos)
+
+    assert [s.frame_idx for s in scores[0].strikes] == [5, 20]
+    assert [s.hand for s in scores[0].strikes] == ["left", "right"]
