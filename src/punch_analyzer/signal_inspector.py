@@ -68,6 +68,11 @@ def _load_pipeline(
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--video", type=Path, default=VIDEO_PATH)
     parser.add_argument("--csv-dir", type=Path, default=CSV_OUTPUT_DIR)
+    parser.add_argument(
+        "--buffer-ms", type=float, default=0,
+        help="Même valeur que --buffer-ms passé à landmark_extraction pour ce CSV -- "
+        "--start/--end restent relatifs à start_ms, décalés en interne vers le CSV brut.",
+    )
     parser.add_argument("--max-gap-frames", type=int, default=DEFAULT_MAX_GAP_FRAMES)
     parser.add_argument("--min-visibility", type=float, default=DEFAULT_MIN_VISIBILITY)
     parser.add_argument("--savgol-window", type=int, default=DEFAULT_SAVGOL_WINDOW)
@@ -131,14 +136,17 @@ def cmd_peaks_in_range(args: argparse.Namespace) -> None:
         args.savgol_polyorder, **_detect_kwargs(args),
     )
 
+    buffer_s = args.buffer_ms / 1000
+    raw_start, raw_end = args.start + buffer_s, args.end + buffer_s
+
     print(f"Candidats d'extension entre {args.start}s et {args.end}s (tous, confirmés ou non) :")
-    in_range = strikes_in_time_range(strikes, args.start, args.end)
+    in_range = strikes_in_time_range(strikes, raw_start, raw_end)
     if not in_range:
         print("  (aucun -- aucun pic d'extension_ratio n'a même été détecté par find_peaks ici)")
     for s in in_range:
         status = "confirmé" if s.geometric_pass else "non confirmé"
         print(
-            f"  [{s.hand}] {s.timestamp_ms / 1000:.3f}s ext={s.extension_ratio:.4f} "
+            f"  [{s.hand}] {s.timestamp_ms / 1000 - buffer_s:.3f}s ext={s.extension_ratio:.4f} "
             f"speed={s.speed:.3f} ({status})"
         )
 
@@ -153,10 +161,10 @@ def cmd_peaks_in_range(args: argparse.Namespace) -> None:
     )
     for frame_idx, t_ms in timestamps.items():
         t = t_ms / 1000
-        if args.start <= t <= args.end:
+        if raw_start <= t <= raw_end:
             value = combined.get(frame_idx, float("nan"))
             flag = "AU-DESSUS" if value > args.activity_threshold else "en dessous"
-            print(f"  frame {frame_idx} {t:.3f}s activité={value:.3f} ({flag})")
+            print(f"  frame {frame_idx} {t - buffer_s:.3f}s activité={value:.3f} ({flag})")
 
 
 def cmd_extension_curve(args: argparse.Namespace) -> None:
@@ -172,13 +180,16 @@ def cmd_extension_curve(args: argparse.Namespace) -> None:
         args.savgol_polyorder, **_detect_kwargs(args),
     )
 
+    buffer_s = args.buffer_ms / 1000
+    raw_start, raw_end = args.start + buffer_s, args.end + buffer_s
+
     print(f"extension_ratio brut, bras {args.hand}, {args.start}s -> {args.end}s :")
     for row in geometry[args.hand].itertuples():
         t = row.timestamp_ms / 1000
-        if args.start <= t <= args.end:
+        if raw_start <= t <= raw_end:
             ext = row.extension_ratio
             ext_str = f"{ext:.4f}" if pd.notna(ext) else "NaN"
-            print(f"  frame {row.frame_idx} {t:.3f}s ext={ext_str}")
+            print(f"  frame {row.frame_idx} {t - buffer_s:.3f}s ext={ext_str}")
 
 
 def cmd_near_miss_speed(args: argparse.Namespace) -> None:
@@ -194,6 +205,8 @@ def cmd_near_miss_speed(args: argparse.Namespace) -> None:
         args.savgol_polyorder, **_detect_kwargs(args),
     )
 
+    buffer_s = args.buffer_ms / 1000
+    strikes = [s for s in strikes if s.timestamp_ms >= args.buffer_ms]
     near_perfect, below_speed = near_miss_speed_strikes(
         strikes, args.extension_floor, args.min_peak_speed
     )
@@ -201,11 +214,11 @@ def cmd_near_miss_speed(args: argparse.Namespace) -> None:
     print(
         f"{len(below_speed)} coup(s) avec extension_ratio >= {args.extension_floor} mais "
         f"speed < min_peak_speed ({args.min_peak_speed}), sur {len(near_perfect)} candidats "
-        f"à extension quasi parfaite au total :"
+        f"à extension quasi parfaite au total (marge exclue) :"
     )
     for s in below_speed:
         print(
-            f"  [{s.hand}] {s.timestamp_ms / 1000:.2f}s ext={s.extension_ratio:.4f} "
+            f"  [{s.hand}] {s.timestamp_ms / 1000 - buffer_s:.2f}s ext={s.extension_ratio:.4f} "
             f"speed={s.speed:.3f} (manque {args.min_peak_speed - s.speed:.3f})"
         )
 
