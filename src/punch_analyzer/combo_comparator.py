@@ -1,5 +1,6 @@
 import argparse
 import json
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,6 +79,65 @@ def filter_buffer_windows(windows: list[ActivityWindow], buffer_ms: float) -> li
 
 def filter_buffer_strikes(strikes: list[Strike], buffer_ms: float) -> list[Strike]:
     return [s for s in strikes if s.timestamp_ms >= buffer_ms]
+
+
+@dataclass
+class HandSpeedStats:
+    hand: str
+    n: int
+    median: float
+    minimum: float
+    maximum: float
+    stdev: float
+
+
+def speed_distribution_by_hand(
+    strikes: list[Strike], extension_threshold: float
+) -> dict[str, list[float]]:
+    """Vitesses au pic des coups confirmés par extension_ratio seul (>= extension_threshold),
+    indépendamment de la vitesse -- sans ça, filtrer par geometric_pass introduirait un biais
+    de survie (ne garderait que des vitesses déjà >= l'ancien seuil)."""
+    by_hand: dict[str, list[float]] = {"left": [], "right": []}
+    for s in strikes:
+        if s.extension_ratio is not None and s.extension_ratio >= extension_threshold:
+            by_hand[s.hand].append(s.speed)
+    return by_hand
+
+
+def compute_hand_speed_stats(speeds_by_hand: dict[str, list[float]]) -> dict[str, HandSpeedStats]:
+    stats = {}
+    for hand, speeds in speeds_by_hand.items():
+        if len(speeds) < 2:
+            continue
+        stats[hand] = HandSpeedStats(
+            hand=hand,
+            n=len(speeds),
+            median=statistics.median(speeds),
+            minimum=min(speeds),
+            maximum=max(speeds),
+            stdev=statistics.stdev(speeds),
+        )
+    return stats
+
+
+def is_speed_gap_net(stats: dict[str, HandSpeedStats], min_separation_ratio: float) -> bool:
+    """"Net" si l'écart entre médianes gauche/droite est au moins min_separation_ratio
+    fois le plus grand des deux écarts-types -- un écart d'un écart-type (ratio=1.0) ou
+    plus n'est pas un bruit d'échantillonnage, distributions clairement séparées."""
+    if "left" not in stats or "right" not in stats:
+        return False
+    gap = abs(stats["left"].median - stats["right"].median)
+    spread = max(stats["left"].stdev, stats["right"].stdev)
+    if spread == 0:
+        return gap > 0
+    return gap / spread >= min_separation_ratio
+
+
+def calibrate_min_peak_speed_by_hand(stats: dict[str, HandSpeedStats]) -> dict[str, float]:
+    """Seuil par main = médiane - 1 écart-type des coups confirmés par extension pour
+    cette main, plancher à 0 -- laisse passer la grande majorité des vrais coups de
+    cette main plutôt qu'un seuil unique calibré sur l'autre main."""
+    return {hand: max(0.0, s.median - s.stdev) for hand, s in stats.items()}
 
 
 def score_combos(
@@ -204,6 +264,17 @@ def main() -> None:
     parser.add_argument(
         "--cross-hand-window", type=int, default=DEFAULT_CROSS_HAND_ARBITRATION_WINDOW_FRAMES
     )
+    parser.add_argument(
+        "--auto-calibrate-speed", action="store_true",
+        help="Calcule la distribution de speed au pic par main (coups confirmés par "
+        "extension_ratio seul) ; si l'écart gauche/droite est net, calibre min_peak_speed "
+        "par main dessus (médiane - 1 écart-type) et relance la détection avant le score.",
+    )
+    parser.add_argument(
+        "--speed-separation-ratio", type=float, default=1.0,
+        help="Écart médiane/écart-type minimal (défaut 1.0 = un écart-type) pour juger "
+        "l'écart gauche/droite 'net' avec --auto-calibrate-speed.",
+    )
     args = parser.parse_args()
 
     csv_path = csv_path_for_video(args.video, args.csv_dir)
@@ -247,6 +318,56 @@ def main() -> None:
             f"buffer_ms={args.buffer_ms:.0f} appliqué : {dropped_windows} fenêtre(s) et "
             f"{dropped_strikes} coup(s) dans la marge retirés avant score."
         )
+
+    if args.auto_calibrate_speed:
+        speeds_by_hand = speed_distribution_by_hand(strikes, args.extension_threshold)
+        stats = compute_hand_speed_stats(speeds_by_hand)
+
+        print("Distribution de speed au pic, coups confirmés par extension_ratio seul :")
+        for hand in ("left", "right"):
+            if hand in stats:
+                s = stats[hand]
+                print(
+                    f"  {hand} (n={s.n}) : médiane={s.median:.3f} min={s.minimum:.3f} "
+                    f"max={s.maximum:.3f} écart-type={s.stdev:.3f}"
+                )
+            else:
+                n = len(speeds_by_hand.get(hand, []))
+                print(f"  {hand} (n={n}) : pas assez de coups confirmés par extension pour un écart-type")
+
+        if is_speed_gap_net(stats, args.speed_separation_ratio):
+            gap = abs(stats["left"].median - stats["right"].median)
+            spread = max(stats["left"].stdev, stats["right"].stdev)
+            calibrated = calibrate_min_peak_speed_by_hand(stats)
+            print(
+                f"\nÉcart net : |médiane gauche - médiane droite| = {gap:.3f} >= "
+                f"{args.speed_separation_ratio} x écart-type max ({spread:.3f}). "
+                f"min_peak_speed calibré par main (médiane - 1 écart-type) :"
+            )
+            for hand, value in calibrated.items():
+                print(f"  {hand} : {value:.3f} (au lieu de {args.min_peak_speed} global)")
+            print()
+
+            strikes = detect_strikes(
+                df,
+                min_visibility=args.min_visibility,
+                savgol_window=args.savgol_window,
+                savgol_polyorder=args.savgol_polyorder,
+                extension_threshold=args.extension_threshold,
+                extension_prominence=args.extension_prominence,
+                angle_threshold_deg=args.angle_threshold,
+                min_peak_speed=args.min_peak_speed,
+                min_peak_speed_by_hand=calibrated,
+                geometric_window_frames=args.geometric_window_frames,
+                cross_hand_window_frames=args.cross_hand_window,
+            )
+            if args.buffer_ms:
+                strikes = filter_buffer_strikes(strikes, args.buffer_ms)
+        else:
+            print(
+                "\nÉcart gauche/droite non net (sous le seuil de séparation demandé) -- "
+                "min_peak_speed reste global, rien de calibré.\n"
+            )
 
     print(f"{len(windows)} fenêtres d'activité détectées, {len(combos)} combos attendus")
     for line in format_window_report(windows, args.buffer_ms):
