@@ -168,6 +168,7 @@ def run_debug_viewer(
     video_path: Path,
     output_dir: Path = CSV_OUTPUT_DIR,
     start_ms: int | None = None,
+    buffer_ms: int = 0,
     min_visibility: float = DEFAULT_MIN_VISIBILITY,
     savgol_window: int = DEFAULT_SAVGOL_WINDOW,
     savgol_polyorder: int = DEFAULT_SAVGOL_POLYORDER,
@@ -246,11 +247,11 @@ def run_debug_viewer(
     fps = video.get(cv2.CAP_PROP_FPS) or 30.0
     video_total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    # frame_idx du CSV est relatif au début de l'extraction (start_ms dans
-    # la vidéo), pas à la frame 0 absolue de la vidéo : on reproduit le
+    # frame_idx du CSV est relatif au début de l'extraction (start_ms - buffer_ms
+    # dans la vidéo), pas à la frame 0 absolue de la vidéo : on reproduit le
     # même seek que landmark_extraction.process_video() pour retrouver
     # l'offset réel, plutôt que de le recalculer via fps (arrondi imprécis).
-    video.set(cv2.CAP_PROP_POS_MSEC, start_ms or 0)
+    video.set(cv2.CAP_PROP_POS_MSEC, max(0, (start_ms or 0) - buffer_ms))
     frame_offset = int(video.get(cv2.CAP_PROP_POS_FRAMES))
 
     csv_frame_count = int(df["frame_idx"].max()) + 1 if not df.empty else 0
@@ -328,6 +329,7 @@ def main() -> None:
     parser.add_argument("--video", type=Path, default=VIDEO_PATH)
     parser.add_argument("--csv-dir", type=Path, default=CSV_OUTPUT_DIR)
     parser.add_argument("--start-ms", type=int, default=None)
+    parser.add_argument("--buffer-ms", type=int, default=0)
     parser.add_argument("--min-visibility", type=float, default=DEFAULT_MIN_VISIBILITY)
     parser.add_argument("--savgol-window", type=int, default=DEFAULT_SAVGOL_WINDOW)
     parser.add_argument("--savgol-polyorder", type=int, default=DEFAULT_SAVGOL_POLYORDER)
@@ -343,6 +345,7 @@ def main() -> None:
         args.video,
         args.csv_dir,
         args.start_ms,
+        buffer_ms=args.buffer_ms,
         min_visibility=args.min_visibility,
         savgol_window=args.savgol_window,
         savgol_polyorder=args.savgol_polyorder,
