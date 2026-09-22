@@ -1,13 +1,19 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from punch_analyzer.combo_comparator import (
     ComboExpectation,
+    calibrate_min_peak_speed_by_hand,
+    compute_hand_speed_stats,
     filter_buffer_strikes,
     filter_buffer_windows,
     format_window_report,
+    is_speed_gap_net,
     load_combo_list,
     score_combos,
+    speed_distribution_by_hand,
     strikes_in_window,
 )
 from punch_analyzer.strike_detection import ActivityWindow, Strike
@@ -166,3 +172,76 @@ def test_format_window_report_shifts_display_by_buffer_ms():
     lines = format_window_report(windows, buffer_ms=2500.0)
 
     assert "0.30s" in lines[0] and "0.70s" in lines[0]
+
+
+def _speed_strike(hand: str, speed: float, extension_ratio: float = 1.0) -> Strike:
+    return Strike(
+        hand=hand, frame_idx=0, timestamp_ms=0.0, speed=speed,
+        geometric_pass=False, extension_ratio=extension_ratio,
+    )
+
+
+def test_speed_distribution_by_hand_excludes_low_extension_and_splits_by_hand():
+    strikes = [
+        _speed_strike("left", 1.5, extension_ratio=0.90),
+        _speed_strike("left", 0.3, extension_ratio=0.50),  # sous le seuil, exclu
+        _speed_strike("right", 2.5, extension_ratio=0.95),
+    ]
+
+    result = speed_distribution_by_hand(strikes, extension_threshold=0.85)
+
+    assert result["left"] == [1.5]
+    assert result["right"] == [2.5]
+
+
+def test_speed_distribution_by_hand_includes_low_speed_confirmed_by_extension_only():
+    # Sans biais de survie : un coup à extension parfaite mais vitesse très basse
+    # doit quand même apparaître (c'est justement ce qu'on veut mesurer).
+    strikes = [_speed_strike("left", 0.1, extension_ratio=1.0)]
+
+    result = speed_distribution_by_hand(strikes, extension_threshold=0.85)
+
+    assert result["left"] == [0.1]
+
+
+def test_compute_hand_speed_stats_basic_values():
+    speeds_by_hand = {"left": [1.0, 2.0, 3.0], "right": [5.0]}
+
+    stats = compute_hand_speed_stats(speeds_by_hand)
+
+    assert "right" not in stats  # moins de 2 valeurs, écart-type indéfini
+    assert stats["left"].n == 3
+    assert stats["left"].median == 2.0
+    assert stats["left"].minimum == 1.0
+    assert stats["left"].maximum == 3.0
+    assert stats["left"].stdev == pytest.approx(1.0)
+
+
+def test_is_speed_gap_net_true_when_medians_far_apart():
+    speeds_by_hand = {"left": [3.0, 3.1, 2.9, 3.0], "right": [0.5, 0.6, 0.4, 0.5]}
+    stats = compute_hand_speed_stats(speeds_by_hand)
+
+    assert is_speed_gap_net(stats, min_separation_ratio=1.0) is True
+
+
+def test_is_speed_gap_net_false_when_distributions_overlap():
+    speeds_by_hand = {"left": [1.0, 2.0, 3.0, 4.0], "right": [1.5, 2.5, 3.5, 2.0]}
+    stats = compute_hand_speed_stats(speeds_by_hand)
+
+    assert is_speed_gap_net(stats, min_separation_ratio=1.0) is False
+
+
+def test_is_speed_gap_net_false_when_one_hand_has_no_stats():
+    stats = compute_hand_speed_stats({"left": [1.0, 2.0], "right": [5.0]})
+
+    assert is_speed_gap_net(stats, min_separation_ratio=1.0) is False
+
+
+def test_calibrate_min_peak_speed_by_hand_is_median_minus_stdev_floored_at_zero():
+    speeds_by_hand = {"left": [1.0, 2.0, 3.0], "right": [0.1, 0.15, 0.1, 0.12]}
+    stats = compute_hand_speed_stats(speeds_by_hand)
+
+    calibrated = calibrate_min_peak_speed_by_hand(stats)
+
+    assert calibrated["left"] == pytest.approx(stats["left"].median - stats["left"].stdev)
+    assert calibrated["right"] >= 0.0
