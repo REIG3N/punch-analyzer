@@ -1,10 +1,9 @@
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
-from punch_analyzer.combo_comparator import filter_buffer_strikes, filter_buffer_windows
+from punch_analyzer.combo_comparator import filter_buffer_strikes
 from punch_analyzer.paths import CSV_OUTPUT_DIR, VIDEO_PATH, csv_path_for_video
 from punch_analyzer.strike_detection import (
     DEFAULT_ACTIVITY_THRESHOLD,
@@ -16,23 +15,17 @@ from punch_analyzer.strike_detection import (
     DEFAULT_HEAD_HEIGHT_TORSO_FRACTION,
     DEFAULT_MAX_GAP_FRAMES,
     DEFAULT_MIN_PEAK_SPEED,
-    DEFAULT_MIN_SILENCE_MS,
     DEFAULT_MIN_VISIBILITY,
-    DEFAULT_MIN_WINDOW_MS,
     DEFAULT_SAVGOL_POLYORDER,
     DEFAULT_SAVGOL_WINDOW,
     WRIST_LANDMARKS,
-    ActivityWindow,
     Strike,
     compute_arm_geometry,
     compute_torso_center_velocity,
     compute_wrist_speed,
     detect_strikes,
     pivot_landmarks,
-    segment_activity_windows,
 )
-
-DEFAULT_MIN_STILLNESS_GAP_S = 5.0
 
 # Outil de diagnostic en lecture seule : n'appelle jamais detect_strikes() ou les
 # fonctions de bas niveau avec des seuils différents de ceux fournis en CLI --
@@ -115,54 +108,6 @@ def strikes_in_time_range(strikes: list[Strike], start_s: float, end_s: float) -
         (s for s in strikes if start_s <= s.timestamp_ms / 1000 <= end_s),
         key=lambda s: s.timestamp_ms,
     )
-
-
-@dataclass
-class StillnessCase:
-    window_index: int
-    gap_before_s: float | None  # None = tout premier coup de la session
-    first_strike: Strike
-    subsequent_strikes: list[Strike]
-
-    @property
-    def subsequent_mean_speed(self) -> float | None:
-        if not self.subsequent_strikes:
-            return None
-        return sum(s.speed for s in self.subsequent_strikes) / len(self.subsequent_strikes)
-
-
-def find_stillness_cases(
-    windows: list[ActivityWindow], strikes: list[Strike], min_gap_s: float
-) -> list[StillnessCase]:
-    """Fenêtres précédées d'une immobilité longue (>= min_gap_s, distincte d'une
-    pause normale entre deux combos) ou la toute première de la session, avec au
-    moins un coup dedans -- pour comparer la vitesse du premier coup à celle des
-    suivants du même combo."""
-    cases = []
-    previous_end_ms: float | None = None
-    for i, window in enumerate(windows, start=1):
-        gap_s = None if previous_end_ms is None else (window.start_ms - previous_end_ms) / 1000
-        qualifies = previous_end_ms is None or (gap_s is not None and gap_s >= min_gap_s)
-        previous_end_ms = window.end_ms
-        if not qualifies:
-            continue
-
-        window_strikes = sorted(
-            (s for s in strikes if window.start_frame <= s.frame_idx <= window.end_frame),
-            key=lambda s: s.frame_idx,
-        )
-        if not window_strikes:
-            continue
-
-        cases.append(
-            StillnessCase(
-                window_index=i,
-                gap_before_s=gap_s,
-                first_strike=window_strikes[0],
-                subsequent_strikes=window_strikes[1:],
-            )
-        )
-    return cases
 
 
 def near_miss_speed_strikes(
@@ -262,7 +207,7 @@ def cmd_near_miss_speed(args: argparse.Namespace) -> None:
     )
 
     buffer_s = args.buffer_ms / 1000
-    strikes = [s for s in strikes if s.timestamp_ms >= args.buffer_ms]
+    strikes = filter_buffer_strikes(strikes, args.buffer_ms)
     near_perfect, below_speed = near_miss_speed_strikes(
         strikes, args.extension_floor, args.min_peak_speed
     )
@@ -277,81 +222,6 @@ def cmd_near_miss_speed(args: argparse.Namespace) -> None:
             f"  [{s.hand}] {s.timestamp_ms / 1000 - buffer_s:.2f}s ext={s.extension_ratio:.4f} "
             f"speed={s.speed:.3f} (manque {args.min_peak_speed - s.speed:.3f})"
         )
-
-
-def cmd_first_strike_after_stillness(args: argparse.Namespace) -> None:
-    """Teste si le premier coup après une immobilité longue (pas une pause normale
-    entre deux combos) est systématiquement plus lent que les coups suivants du même
-    combo -- si oui, c'est une caractéristique du mouvement à documenter, pas un
-    seuil à corriger en baissant min_peak_speed globalement."""
-    csv_path = csv_path_for_video(args.video, args.csv_dir)
-    if not csv_path.exists():
-        print(f"CSV introuvable: {csv_path} (lancer landmark_extraction d'abord)")
-        return
-
-    df = pd.read_csv(csv_path)
-    windows = segment_activity_windows(
-        df, activity_threshold=args.activity_threshold, min_window_ms=args.min_window_ms,
-        min_silence_ms=args.min_silence_ms, max_gap_frames=args.max_gap_frames,
-        min_visibility=args.min_visibility, savgol_window=args.savgol_window,
-        savgol_polyorder=args.savgol_polyorder,
-    )
-    strikes = detect_strikes(
-        df, max_gap_frames=args.max_gap_frames, min_visibility=args.min_visibility,
-        savgol_window=args.savgol_window, savgol_polyorder=args.savgol_polyorder,
-        **_detect_kwargs(args),
-    )
-
-    if args.buffer_ms:
-        windows = filter_buffer_windows(windows, args.buffer_ms)
-        strikes = filter_buffer_strikes(strikes, args.buffer_ms)
-
-    cases = find_stillness_cases(windows, strikes, args.min_gap_s)
-    buffer_s = args.buffer_ms / 1000
-
-    print(
-        f"{len(cases)} fenêtre(s) précédée(s) d'une immobilité longue "
-        f"(silence >= {args.min_gap_s}s, ou tout premier coup de la session) "
-        f"et contenant au moins un coup :\n"
-    )
-
-    slower_count = 0
-    comparable_count = 0
-    for case in cases:
-        gap_str = (
-            "premier coup de la session (pas de fenêtre précédente)"
-            if case.gap_before_s is None
-            else f"silence avant = {case.gap_before_s:.2f}s"
-        )
-        print(f"[fenêtre {case.window_index}] {gap_str}")
-        fs = case.first_strike
-        ext = f"{fs.extension_ratio:.3f}" if fs.extension_ratio is not None else "N/A"
-        print(
-            f"  1er coup : [{fs.hand}] {fs.timestamp_ms / 1000 - buffer_s:.2f}s "
-            f"speed={fs.speed:.3f} ext={ext}"
-        )
-        mean_speed = case.subsequent_mean_speed
-        if mean_speed is None:
-            print("  (seul coup de cette fenêtre, pas de comparaison possible)")
-        else:
-            delta = fs.speed - mean_speed
-            pct = (delta / mean_speed * 100) if mean_speed else float("nan")
-            print(
-                f"  moyenne des {len(case.subsequent_strikes)} coup(s) suivant(s) : "
-                f"{mean_speed:.3f} (delta {delta:+.3f}, {pct:+.0f}%)"
-            )
-            comparable_count += 1
-            if fs.speed < mean_speed:
-                slower_count += 1
-        print()
-
-    if comparable_count:
-        print(
-            f"{slower_count}/{comparable_count} cas comparables où le 1er coup est plus "
-            f"lent que la moyenne des coups suivants de la même fenêtre."
-        )
-    else:
-        print("Aucun cas comparable (pas de second coup dans la même fenêtre).")
 
 
 def main() -> None:
@@ -385,18 +255,6 @@ def main() -> None:
     near_miss_parser.add_argument("--extension-floor", type=float, default=0.98)
     _add_common_args(near_miss_parser)
     near_miss_parser.set_defaults(func=cmd_near_miss_speed)
-
-    stillness_parser = subparsers.add_parser(
-        "first-strike-after-stillness",
-        help="Compare la vitesse du 1er coup d'un combo (après une longue immobilité) "
-        "aux coups suivants du même combo.",
-    )
-    stillness_parser.add_argument("--min-gap-s", type=float, default=DEFAULT_MIN_STILLNESS_GAP_S)
-    stillness_parser.add_argument("--activity-threshold", type=float, default=DEFAULT_ACTIVITY_THRESHOLD)
-    stillness_parser.add_argument("--min-window-ms", type=float, default=DEFAULT_MIN_WINDOW_MS)
-    stillness_parser.add_argument("--min-silence-ms", type=float, default=DEFAULT_MIN_SILENCE_MS)
-    _add_common_args(stillness_parser)
-    stillness_parser.set_defaults(func=cmd_first_strike_after_stillness)
 
     args = parser.parse_args()
     args.func(args)
