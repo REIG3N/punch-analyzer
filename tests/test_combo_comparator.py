@@ -3,6 +3,8 @@ from pathlib import Path
 
 from punch_analyzer.combo_comparator import (
     ComboExpectation,
+    filter_buffer_strikes,
+    filter_buffer_windows,
     format_window_report,
     load_combo_list,
     score_combos,
@@ -125,3 +127,42 @@ def test_score_combos_keeps_individual_strikes_sorted_for_peak_speed_reporting()
 
     assert [s.frame_idx for s in scores[0].strikes] == [5, 20]
     assert [s.hand for s in scores[0].strikes] == ["left", "right"]
+
+
+def test_filter_buffer_windows_drops_windows_entirely_inside_buffer():
+    windows = [
+        ActivityWindow(start_frame=0, end_frame=5, start_ms=0.0, end_ms=1000.0),  # dans la marge
+        ActivityWindow(start_frame=10, end_frame=20, start_ms=2000.0, end_ms=3000.0),  # après
+    ]
+
+    result = filter_buffer_windows(windows, buffer_ms=2500.0)
+
+    assert len(result) == 1
+    assert result[0].start_ms == 2000.0
+
+
+def test_filter_buffer_windows_keeps_window_straddling_the_boundary():
+    windows = [ActivityWindow(start_frame=0, end_frame=20, start_ms=2000.0, end_ms=3000.0)]
+
+    result = filter_buffer_windows(windows, buffer_ms=2500.0)
+
+    assert len(result) == 1
+
+
+def test_filter_buffer_strikes_drops_strikes_before_buffer():
+    strikes = [
+        Strike(hand="left", frame_idx=30, timestamp_ms=1000.0, speed=2.0, geometric_pass=True),
+        Strike(hand="right", frame_idx=90, timestamp_ms=3000.0, speed=2.0, geometric_pass=True),
+    ]
+
+    result = filter_buffer_strikes(strikes, buffer_ms=2500.0)
+
+    assert [s.timestamp_ms for s in result] == [3000.0]
+
+
+def test_format_window_report_shifts_display_by_buffer_ms():
+    windows = [ActivityWindow(start_frame=0, end_frame=10, start_ms=2800.0, end_ms=3200.0)]
+
+    lines = format_window_report(windows, buffer_ms=2500.0)
+
+    assert "0.30s" in lines[0] and "0.70s" in lines[0]
