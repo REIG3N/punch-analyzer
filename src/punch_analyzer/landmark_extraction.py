@@ -92,15 +92,23 @@ def process_video(
     output_dir: Path = CSV_OUTPUT_DIR,
     start_ms: int | None = None,
     end_ms: int | None = None,
+    buffer_ms: int = 0,
 ) -> None:
+    """buffer_ms : marge extraite AVANT start_ms (jamais recadrée ici -- reste dans
+    le CSV, frame_idx=0 correspond à start_ms-buffer_ms). Évite qu'un mouvement
+    rapide au tout début du signal utile tombe pile sur le bord du lissage
+    Savitzky-Golay, où son pic peut être écrasé plutôt que simplement atténué.
+    Les consommateurs du CSV (combo_comparator, signal_inspector) doivent recevoir
+    le même buffer_ms pour recadrer au moment du score/de l'affichage, pas ici."""
     video = cv2.VideoCapture(str(video_path))
     if not video.isOpened():
         print("Erreur: vidéo non trouvée ou illisible")
         return
 
     fps = video.get(cv2.CAP_PROP_FPS)
-    if start_ms:
-        video.set(cv2.CAP_PROP_POS_MSEC, start_ms)
+    seek_ms = max(0, (start_ms or 0) - buffer_ms)
+    if seek_ms:
+        video.set(cv2.CAP_PROP_POS_MSEC, seek_ms)
     frame_idx = 0
     csv_rows = []
 
@@ -113,7 +121,7 @@ def process_video(
             break
 
         timestamp_ms = int(frame_idx * 1000 / fps)
-        if end_ms is not None and (start_ms or 0) + timestamp_ms > end_ms:
+        if end_ms is not None and seek_ms + timestamp_ms > end_ms:
             break
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -154,10 +162,16 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=CSV_OUTPUT_DIR)
     parser.add_argument("--start-ms", type=int, default=None)
     parser.add_argument("--end-ms", type=int, default=None)
+    parser.add_argument(
+        "--buffer-ms", type=int, default=0,
+        help="Marge extraite avant --start-ms (non recadrée ici, cf. process_video()).",
+    )
     args = parser.parse_args()
 
     with load_landmarker() as landmarker:
-        process_video(landmarker, args.video, args.output_dir, args.start_ms, args.end_ms)
+        process_video(
+            landmarker, args.video, args.output_dir, args.start_ms, args.end_ms, args.buffer_ms
+        )
 
 
 if __name__ == "__main__":
