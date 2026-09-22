@@ -70,6 +70,11 @@ def build_extension_lookup(geometry: pd.DataFrame) -> dict[int, float]:
     return {int(row.frame_idx): float(row.extension_ratio) for row in valid.itertuples()}
 
 
+def build_angle_lookup(geometry: pd.DataFrame) -> dict[int, float]:
+    valid = geometry.dropna(subset=["angle_deg"])
+    return {int(row.frame_idx): float(row.angle_deg) for row in valid.itertuples()}
+
+
 def nearby_strikes(
     frame_idx: int, strikes: list[Strike], window_frames: int
 ) -> list[Strike]:
@@ -82,11 +87,15 @@ def format_overlay_lines(
     right_speed: float | None,
     left_extension: float | None,
     right_extension: float | None,
+    left_angle: float | None,
+    right_angle: float | None,
     active_strikes: list[Strike],
 ) -> list[str]:
     """4 lignes fixes : le marqueur de coup s'ajoute à la ligne de la main
     concernée plutôt que d'apparaître/disparaître comme ligne séparée, pour
-    que rien ne se décale à l'écran quand un coup est détecté."""
+    que rien ne se décale à l'écran quand un coup est détecté. v/ext/ang sont
+    affichés à chaque frame (pas seulement sur un coup confirmé), pour lire
+    ces valeurs sur un coup raté aussi bien que sur un coup réussi."""
 
     def fmt(value: float | None) -> str:
         return f"{value:.3f}" if value is not None else "N/A"
@@ -99,8 +108,8 @@ def format_overlay_lines(
 
     return [
         f"frame {frame_idx}",
-        f"gauche: v={fmt(left_speed)} ext={fmt(left_extension)}{marker('left')}",
-        f"droit: v={fmt(right_speed)} ext={fmt(right_extension)}{marker('right')}",
+        f"gauche: v={fmt(left_speed)} ext={fmt(left_extension)} ang={fmt(left_angle)}{marker('left')}",
+        f"droit: v={fmt(right_speed)} ext={fmt(right_extension)} ang={fmt(right_angle)}{marker('right')}",
         "type de coup: N/A (Ticket 3)",
     ]
 
@@ -190,14 +199,16 @@ def run_debug_viewer(
         compute_wrist_speed(df, RIGHT_WRIST_ID, torso_velocity, min_visibility=min_visibility,
                              savgol_window=savgol_window, savgol_polyorder=savgol_polyorder)
     )
-    left_extension_lookup = build_extension_lookup(
-        compute_arm_geometry(wide, "left", min_visibility,
-                              savgol_window=savgol_window, savgol_polyorder=savgol_polyorder)
+    left_geometry = compute_arm_geometry(
+        wide, "left", min_visibility, savgol_window=savgol_window, savgol_polyorder=savgol_polyorder
     )
-    right_extension_lookup = build_extension_lookup(
-        compute_arm_geometry(wide, "right", min_visibility,
-                              savgol_window=savgol_window, savgol_polyorder=savgol_polyorder)
+    right_geometry = compute_arm_geometry(
+        wide, "right", min_visibility, savgol_window=savgol_window, savgol_polyorder=savgol_polyorder
     )
+    left_extension_lookup = build_extension_lookup(left_geometry)
+    right_extension_lookup = build_extension_lookup(right_geometry)
+    left_angle_lookup = build_angle_lookup(left_geometry)
+    right_angle_lookup = build_angle_lookup(right_geometry)
 
     strikes = detect_strikes(
         df,
@@ -270,6 +281,8 @@ def run_debug_viewer(
             right_speed_lookup.get(current_frame),
             left_extension_lookup.get(current_frame),
             right_extension_lookup.get(current_frame),
+            left_angle_lookup.get(current_frame),
+            right_angle_lookup.get(current_frame),
             active_strikes,
         )
         draw_overlay(frame, lines)
