@@ -437,3 +437,18 @@ def test_segment_activity_windows_drops_short_blip():
     windows = segment_activity_windows(df, savgol_window=3, savgol_polyorder=1)
 
     assert windows == []
+
+
+def test_detect_strikes_min_peak_speed_by_hand_overrides_global_default():
+    df = _jab_cycle_df()
+
+    # Seuil global bas : le coup passe.
+    strikes_default = detect_strikes(df, min_peak_speed=0.0)
+    assert strikes_default[0].geometric_pass is True
+
+    # min_peak_speed_by_hand impose un seuil impossible à atteindre pour "left" :
+    # doit prendre le dessus sur min_peak_speed, pas être ignoré.
+    strikes_overridden = detect_strikes(
+        df, min_peak_speed=0.0, min_peak_speed_by_hand={"left": 100.0, "right": 0.0}
+    )
+    assert strikes_overridden[0].geometric_pass is False
